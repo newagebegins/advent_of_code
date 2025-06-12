@@ -880,7 +880,6 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     size_t savedArenaUsed = arena->used;
 
     Arena stringArena = makeSubArena(arena, GIGABYTES(3));
-    StringSet stringSet = makeStringSet(arena, 1031);
     StringSet allStringsSet = makeStringSet(arena, 1000081);
     Heap heap = makeHeap(arena, 1024 * 1024 * 100);
 
@@ -893,7 +892,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     {
         HeapNode top = removeTop(&heap);
 
-#if 1
+#if 0
         {
             StringSlice slice = findMaxSubstring(top.molecule, goal);
 
@@ -945,7 +944,9 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
 
             printf("\n%s << %s >> %s | %d/%d | %d\n", decodedPrefix, decodedCenter, decodedSuffix, top.score, goalLen, top.steps);
         }
-#else
+#endif
+
+#if 0
         printf("\n%s | %d/%d | %d\n", top.molecule, top.score, goalLen, top.steps);
 #endif
 
@@ -955,23 +956,50 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         }
         else
         {
-            getMoleculesAfterOneReplacement(top.molecule, replacements, &stringArena, &stringSet);
-            for (int i = 0; i < stringSet.capacity; ++i)
+            int moleculeLen = getStringLength(top.molecule);
+            for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
             {
-                char* molecule = stringSet.strings[i];
-                if (molecule)
+                Replacement* replacement = &replacements->replacements[replacementIndex];
+                int toLen = getStringLength(replacement->molecule);
+                for (int atomIndex = 0; atomIndex < moleculeLen; ++atomIndex)
                 {
-                    if (addStringToSet(&allStringsSet, molecule))
+                    if (top.molecule[atomIndex] == replacement->atom)
                     {
-                        int score = computeScore(molecule, goal);
-                        if (score >= 0)
+                        int newMoleculeLen = moleculeLen + toLen - 1;
+                        size_t stringArenaSavedUsed = stringArena.used;
+                        char* newMolecule = pushString(&stringArena, newMoleculeLen);
+
+                        int newIndex = 0;
+                        for (int prefixIndex = 0; prefixIndex < atomIndex; ++prefixIndex, ++newIndex)
                         {
-                            insert(&heap, molecule, score, top.steps + 1);
+                            newMolecule[newIndex] = top.molecule[prefixIndex];
+                        }
+                        for (int toAtomIndex = 0; toAtomIndex < toLen; ++toAtomIndex, ++newIndex)
+                        {
+                            newMolecule[newIndex] = replacement->molecule[toAtomIndex];
+                        }
+                        for (int suffixIndex = atomIndex + 1; suffixIndex < moleculeLen; ++suffixIndex, ++newIndex)
+                        {
+                            newMolecule[newIndex] = top.molecule[suffixIndex];
+                        }
+                        ASSERT(newIndex == newMoleculeLen);
+                        newMolecule[newMoleculeLen] = 0;
+
+                        if (addStringToSet(&allStringsSet, newMolecule))
+                        {
+                            int score = computeScore(newMolecule, goal);
+                            if (score >= 0)
+                            {
+                                insert(&heap, newMolecule, score, top.steps + 1);
+                            }
+                        }
+                        else
+                        {
+                            stringArena.used = stringArenaSavedUsed;
                         }
                     }
                 }
             }
-            clearStringSet(&stringSet);
         }
     }
 
