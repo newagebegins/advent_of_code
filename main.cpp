@@ -902,16 +902,28 @@ int main()
     ASSERT(memory);
     Arena arena = makeArena(memory, arenaSize);
 
+    printf("testComputeScore()...");
     testComputeScore(&arena);
+    printf("OK\n");
+
+    printf("testExample1()...");
     testExample1(&arena);
+    printf("OK\n");
+
+    printf("testExample2()...");
     testExample2(&arena);
+    printf("OK\n");
 
     char* input = readEntireFile(&arena, "input.txt");
     if (input)
     {
         ParseResult parseResult = parseInput(&arena, input);
+        printf("doPart1()...");
+        printf("OK\n");
         doPart1(&arena, &parseResult);
+        printf("doPart2()...");
         doPart2(&arena, &parseResult);
+        printf("OK\n");
     }
     else
     {
