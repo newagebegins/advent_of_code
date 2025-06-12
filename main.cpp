@@ -181,6 +181,7 @@ static long long computeStringHash(const char* s) {
 
 static bool addStringToSet(StringSet* set, char* toAdd)
 {
+    ASSERT(set->count < set->capacity);
     bool added;
     long long hash = computeStringHash(toAdd);
     size_t index = hash % set->capacity;
@@ -202,7 +203,6 @@ static bool addStringToSet(StringSet* set, char* toAdd)
         else
         {
             added = true;
-            ASSERT(set->count < set->capacity);
             ++set->count;
             set->strings[index] = toAdd;
             break;
@@ -690,7 +690,7 @@ static void getMoleculesAfterOneReplacement(const char* molecule, ReplacementLis
     }
 }
 
-static int computeScore(const char* molecule, const char* goal)
+static int computeScore1(const char* molecule, const char* goal)
 {
     int score;
     int moleculeLen = getStringLength(molecule);
@@ -717,6 +717,115 @@ static int computeScore(const char* molecule, const char* goal)
         }
     }
     return score;
+}
+
+struct StringSlice
+{
+    int startIndex;
+    int len;
+};
+
+static StringSlice findMaxSubstring(const char* const a, const char* const b)
+{
+    StringSlice result = {};
+    int aLen = getStringLength(a);
+    int bLen = getStringLength(b);
+    
+    int bIndex = 0;
+    for (int aStart = 0; aStart < aLen && bIndex < bLen;)
+    {
+        if (a[aStart] == b[bIndex])
+        {
+            int substringLength = 0;
+            int bStart = bIndex;
+            for (int aIndex = aStart; aIndex < aLen && bIndex < bLen;)
+            {
+                if (a[aIndex] == b[bIndex])
+                {
+                    ++substringLength;
+                    ++aIndex;
+                    ++bIndex;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            if (substringLength > result.len)
+            {
+                result.len = substringLength;
+                result.startIndex = bStart;
+            }
+        }
+        else
+        {
+            ++bIndex;
+            if (bIndex == bLen)
+            {
+                bIndex = 0;
+                ++aStart;
+            }
+        }
+    }
+
+
+    return result;
+}
+
+static void testFindMaxSubstring()
+{
+    StringSlice result;
+
+    result = findMaxSubstring("", "");
+    ASSERT(result.startIndex == 0 && result.len == 0);
+
+    result = findMaxSubstring("A", "A");
+    ASSERT(result.startIndex == 0 && result.len == 1);
+
+    result = findMaxSubstring("A", "B");
+    ASSERT(result.startIndex == 0 && result.len == 0);
+
+    result = findMaxSubstring("ABC", "AABBABC");
+    ASSERT(result.startIndex == 4 && result.len == 3);
+
+    result = findMaxSubstring("ABC", "AXBC");
+    ASSERT(result.startIndex == 2 && result.len == 2);
+
+    result = findMaxSubstring("ABxdC", "AXBAABCffBxdsdC");
+    ASSERT(result.startIndex == 9 && result.len == 3);
+}
+
+static int computeScore2(const char* molecule, const char* goal)
+{
+    int score;
+    int moleculeLen = getStringLength(molecule);
+    int goalLen = getStringLength(goal);
+    if (moleculeLen > goalLen)
+    {
+        score = -1;
+    }
+    else if (moleculeLen == goalLen)
+    {
+        if (stringsAreEqual(molecule, goal))
+        {
+            score = 999999;
+        }
+        else
+        {
+            score = -1;
+        }
+    }
+    else
+    {
+        StringSlice slice = findMaxSubstring(molecule, goal);
+        score = slice.len;
+    }
+    return score;
+}
+
+static int computeScore(const char* molecule, const char* goal)
+{
+    return computeScore2(molecule, goal);
 }
 
 static void testComputeScore(Arena* arena)
@@ -771,16 +880,75 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     size_t savedArenaUsed = arena->used;
 
     Arena stringArena = makeSubArena(arena, GIGABYTES(3));
-    StringSet stringSet = makeStringSet(arena, 10061);
+    StringSet stringSet = makeStringSet(arena, 1031);
+    StringSet allStringsSet = makeStringSet(arena, 1000081);
     Heap heap = makeHeap(arena, 1024 * 1024 * 100);
 
     char* startMolecule = encodeMolecule(arena, atomNames, "e");
+    int goalLen = getStringLength(goal);
     insert(&heap, startMolecule, 0, 0);
 
     int result = -1;
     while (result < 0)
     {
         HeapNode top = removeTop(&heap);
+
+#if 1
+        {
+            StringSlice slice = findMaxSubstring(top.molecule, goal);
+
+            char encodedPrefix[512];
+            ASSERT(slice.startIndex <= goalLen);
+            for (int i = 0; i < slice.startIndex; ++i)
+            {
+                encodedPrefix[i] = goal[i];
+            }
+            ASSERT(slice.startIndex < ARRAY_COUNT(encodedPrefix));
+            encodedPrefix[slice.startIndex] = 0;
+
+            char encodedCenter[512];
+            int centerIndex = 0;
+            ASSERT(slice.startIndex + slice.len <= goalLen);
+            for (int goalIndex = slice.startIndex; goalIndex < slice.startIndex + slice.len; ++goalIndex, ++centerIndex)
+            {
+                encodedCenter[centerIndex] = goal[goalIndex];
+            }
+            ASSERT(centerIndex < ARRAY_COUNT(encodedCenter));
+            encodedCenter[centerIndex] = 0;
+
+            char encodedSuffix[512];
+            int suffixIndex = 0;
+            for (int goalIndex = slice.startIndex + slice.len; goalIndex < goalLen; ++goalIndex, ++suffixIndex)
+            {
+                encodedSuffix[suffixIndex] = goal[goalIndex];
+            }
+            ASSERT(suffixIndex < ARRAY_COUNT(encodedSuffix));
+            encodedSuffix[suffixIndex] = 0;
+
+            char decodedPrefix[1024];
+            decodeMolecule(encodedPrefix, atomNames, decodedPrefix, ARRAY_COUNT(decodedPrefix));
+
+            char decodedCenter[1024];
+            decodeMolecule(encodedCenter, atomNames, decodedCenter, ARRAY_COUNT(decodedCenter));
+
+            char decodedSuffix[1024];
+            decodeMolecule(encodedSuffix, atomNames, decodedSuffix, ARRAY_COUNT(decodedSuffix));
+
+            char decodedGoal[1024];
+            decodeMolecule(goal, atomNames, decodedGoal, ARRAY_COUNT(decodedGoal));
+            int docodedGoalLen = getStringLength(decodedGoal);
+
+            char decodedMolecule[1024];
+            decodeMolecule(top.molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+
+            //printf("\n%s | %d/%d | %d\n", decodedMolecule, top.score, goalLen, top.steps);
+
+            printf("\n%s << %s >> %s | %d/%d | %d\n", decodedPrefix, decodedCenter, decodedSuffix, top.score, goalLen, top.steps);
+        }
+#else
+        printf("\n%s | %d/%d | %d\n", top.molecule, top.score, goalLen, top.steps);
+#endif
+
         if (stringsAreEqual(top.molecule, goal))
         {
             result = top.steps;
@@ -793,10 +961,13 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                 char* molecule = stringSet.strings[i];
                 if (molecule)
                 {
-                    int score = computeScore(molecule, goal);
-                    if (score >= 0)
+                    if (addStringToSet(&allStringsSet, molecule))
                     {
-                        insert(&heap, molecule, score, top.steps + 1);
+                        int score = computeScore(molecule, goal);
+                        if (score >= 0)
+                        {
+                            insert(&heap, molecule, score, top.steps + 1);
+                        }
                     }
                 }
             }
@@ -902,9 +1073,13 @@ int main()
     ASSERT(memory);
     Arena arena = makeArena(memory, arenaSize);
 
-    printf("testComputeScore()...");
-    testComputeScore(&arena);
+    printf("testFindMaxSubstring()...");
+    testFindMaxSubstring();
     printf("OK\n");
+
+    //printf("testComputeScore()...");
+    //testComputeScore(&arena);
+    //printf("OK\n");
 
     printf("testExample1()...");
     testExample1(&arena);
