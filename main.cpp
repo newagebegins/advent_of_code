@@ -1,6 +1,7 @@
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <time.h>
 
 #define ASSERT(x) if(!(x)){*((int*)0) = 1;}
 #define ARRAY_COUNT(a) (sizeof(a)/sizeof((a)[0]))
@@ -806,9 +807,9 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
 {
     size_t savedArenaUsed = arena->used;
 
-    Arena stringArena = makeSubArena(arena, GIGABYTES(4));
-    StringSet allStringsSet = makeStringSet(arena, 100000073);
-    Heap heap = makeHeap(arena, 1024 * 1024 * 10);
+    Arena stringArena = makeSubArena(arena, GIGABYTES(16));
+    StringSet allStringsSet = makeStringSet(arena, 1000000087);
+    Heap heap = makeHeap(arena, 1024 * 1024 * 100);
 
     int goalLen = getStringLength(goal);
 
@@ -816,7 +817,10 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     insert(&heap, startMolecule, 0, 0);
 
     int result = -1;
+
     size_t debugCounter = 0;
+    time_t timerStart = time(NULL);
+
     while (result < 0)
     {
         HeapNode top = removeTop(&heap);
@@ -826,7 +830,10 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         ++debugCounter;
         if (debugCounter % 1000 == 0)
         {
+            time_t timerCurrent = time(NULL);
+
             printf("\n");
+            printf("Seconds: %jd\n", timerCurrent - timerStart);
             printf("Tops removed: %zu\n", debugCounter);
             printf("Top score | steps: %d / %d | %d\n", top.score, goalLen, top.steps);
             printf("String arena used: %zu / %zu (%f)\n", stringArena.used, stringArena.size, (float)stringArena.used / stringArena.size);
@@ -834,7 +841,6 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
             printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
 
             StringSlice slice = findMaxSubstring(top.molecule, goal);
-            //printf("%s\n", top.molecule);
 
             int i = 0;
             for (; i < slice.startIndex; ++i)
@@ -854,7 +860,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
             printf("\n");
         }
 
-        if (stringsAreEqual(top.molecule, goal))
+        if (top.score == goalLen)
         {
             result = top.steps;
         }
@@ -1044,7 +1050,7 @@ static void doPart2(Arena* arena, ParseResult* parseResult)
 
 int main()
 {
-    size_t arenaSize = GIGABYTES(5);
+    size_t arenaSize = GIGABYTES(27);
     void* memory = VirtualAlloc(NULL, arenaSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     ASSERT(memory);
     Arena arena = makeArena(memory, arenaSize);
