@@ -694,15 +694,16 @@ static void getMoleculesAfterOneReplacement(const char* molecule, ReplacementLis
     }
 }
 
-struct StringSlice
+struct MaxSubstringResult
 {
-    int startIndex;
+    int startIndexA;
+    int startIndexB;
     int len;
 };
 
-static StringSlice findMaxSubstring(const char* const a, const char* const b)
+static MaxSubstringResult findMaxSubstring(const char* const a, const char* const b)
 {
-    StringSlice result = {};
+    MaxSubstringResult result = {};
     int aLen = getStringLength(a);
     int bLen = getStringLength(b);
 
@@ -712,6 +713,7 @@ static StringSlice findMaxSubstring(const char* const a, const char* const b)
         if (a[aStart] == b[bIndex])
         {
             int substringLength = 0;
+            int bStart = bIndex;
             for (int aIndex = aStart; aIndex < aLen && bIndex < bLen;)
             {
                 if (a[aIndex] == b[bIndex])
@@ -728,7 +730,8 @@ static StringSlice findMaxSubstring(const char* const a, const char* const b)
             if (substringLength > result.len)
             {
                 result.len = substringLength;
-                result.startIndex = aStart;
+                result.startIndexA = aStart;
+                result.startIndexB = bStart;
             }
         }
         else
@@ -748,34 +751,34 @@ static StringSlice findMaxSubstring(const char* const a, const char* const b)
 
 static void testFindMaxSubstring()
 {
-    StringSlice result;
+    MaxSubstringResult result;
 
     result = findMaxSubstring("", "");
-    ASSERT(result.startIndex == 0 && result.len == 0);
+    ASSERT(result.startIndexA == 0 && result.len == 0);
 
     result = findMaxSubstring("A", "A");
-    ASSERT(result.startIndex == 0 && result.len == 1);
+    ASSERT(result.startIndexA == 0 && result.len == 1);
 
     result = findMaxSubstring("A", "B");
-    ASSERT(result.startIndex == 0 && result.len == 0);
+    ASSERT(result.startIndexA == 0 && result.len == 0);
 
     result = findMaxSubstring("ABC", "AABBABC");
-    ASSERT(result.startIndex == 0 && result.len == 3);
+    ASSERT(result.startIndexA == 0 && result.len == 3);
 
     result = findMaxSubstring("ABC", "AXBC");
-    ASSERT(result.startIndex == 1 && result.len == 2);
+    ASSERT(result.startIndexA == 1 && result.len == 2);
 
     result = findMaxSubstring("ABxdC", "AXBAABCffBxdsdC");
-    ASSERT(result.startIndex == 1 && result.len == 3);
+    ASSERT(result.startIndexA == 1 && result.len == 3);
 
     result = findMaxSubstring("ABxdC", "AXBAABCffBxBxdsdC");
-    ASSERT(result.startIndex == 1 && result.len == 3);
+    ASSERT(result.startIndexA == 1 && result.len == 3);
 
     result = findMaxSubstring("ABCD", "ABCD");
-    ASSERT(result.startIndex == 0 && result.len == 4);
+    ASSERT(result.startIndexA == 0 && result.len == 4);
 
     result = findMaxSubstring("ABC", "AAABBABCCC");
-    ASSERT(result.startIndex == 0 && result.len == 3);
+    ASSERT(result.startIndexA == 0 && result.len == 3);
 }
 
 static int minimum(int a, int b, int c)
@@ -807,6 +810,11 @@ static int minimum(int a, int b, int c)
         }
     }
     return result;
+}
+
+static int minimum(int a, int b)
+{
+    return (a < b) ? a : b;
 }
 
 static int computeLovenshteinDistance(const char* a, const char* b)
@@ -875,7 +883,6 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
 {
     size_t savedArenaUsed = arena->used;
 
-    Arena stringArena = makeSubArena(arena, GIGABYTES(16));
     StringSet allStringsSet = makeStringSet(arena, 1000000087);
     Heap heap = makeHeap(arena, 1024 * 1024 * 100);
 
@@ -903,27 +910,45 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
             printf("\n");
             printf("Seconds: %jd\n", timerCurrent - timerStart);
             printf("Tops removed: %zu\n", debugCounter);
-            printf("Top score | steps: %d / %d | %d\n", top.score, goalLen, top.steps);
-            printf("String arena used: %zu / %zu (%f)\n", stringArena.used, stringArena.size, (float)stringArena.used / stringArena.size);
+            printf("Top dist | steps: %d | %d\n", top.score, top.steps);
+            printf("Top / goal len: %d / %d\n", moleculeLen, goalLen);
+            printf("Arena used: %zu / %zu (%f)\n", arena->used, arena->size, (float)arena->used / arena->size);
             printf("String set used: %zu / %zu (%f)\n", allStringsSet.count, allStringsSet.capacity, (float)allStringsSet.count / allStringsSet.capacity);
             printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
 
-            StringSlice slice = findMaxSubstring(top.molecule, goal);
+            MaxSubstringResult slice = findMaxSubstring(top.molecule, goal);
+            printf("Max substring len: %d\n", slice.len);
 
-            int i = 0;
-            for (; i < slice.startIndex; ++i)
+            for (int i = 0; i < slice.startIndexA; ++i)
             {
-                printf("%c", top.molecule[i]);
+                printf(" ");
             }
-            printf(" << ");
-            for (; i < slice.startIndex + slice.len; ++i)
+            printf("*");
+            if (slice.len > 1)
             {
-                printf("%c", top.molecule[i]);
+                for (int i = 1; i < slice.len - 1; ++i)
+                {
+                    printf(" ");
+                }
+                printf("*");
             }
-            printf(" >> ");
-            for (; i < moleculeLen; ++i)
+            printf("\n");
+
+            printf("%s\n", top.molecule);
+            printf("%s\n", goal);
+
+            for (int i = 0; i < slice.startIndexB; ++i)
             {
-                printf("%c", top.molecule[i]);
+                printf(" ");
+            }
+            printf("*");
+            if (slice.len > 1)
+            {
+                for (int i = 1; i < slice.len - 1; ++i)
+                {
+                    printf(" ");
+                }
+                printf("*");
             }
             printf("\n");
         }
@@ -946,8 +971,8 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
 
                         if (newMoleculeLen <= goalLen)
                         {
-                            size_t stringArenaSavedUsed = stringArena.used;
-                            char* newMolecule = pushString(&stringArena, newMoleculeLen);
+                            size_t stringArenaSavedUsed = arena->used;
+                            char* newMolecule = pushString(arena, newMoleculeLen);
 
                             int newIndex = 0;
                             for (int prefixIndex = 0; prefixIndex < atomIndex; ++prefixIndex, ++newIndex)
@@ -971,11 +996,11 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                                 {
                                     size_t arenaSavedUsed = arena->used;
 
-                                    const char* a = newMolecule;
-                                    const char* b = goal;
+                                    const char* a = goal;
+                                    const char* b = newMolecule;
 
-                                    int aLen = newMoleculeLen;
-                                    int bLen = goalLen;
+                                    int aLen = goalLen;
+                                    int bLen = newMoleculeLen;
                                     int* row0 = pushArray(arena, int, aLen + 1);
                                     int* row1 = pushArray(arena, int, aLen + 1);
 
@@ -999,10 +1024,17 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                                             }
                                             else
                                             {
-                                                int c1 = v0[x - 1];
-                                                int c2 = v0[x];
-                                                int c3 = v1[x - 1];
-                                                v1[x] = 1 + minimum(c1, c2, c3);
+#if 0
+                                                int c1 = v0[x - 1] + 1000;
+                                                int c2 = v0[x] + 10000;
+                                                int c3 = v1[x - 1] + 1;
+                                                v1[x] = minimum(c1, c2, c3);
+#else
+                                                /*int c1 = v0[x - 1] + 1;
+                                                int c2 = v1[x - 1] + 1;
+                                                v1[x] = minimum(c1, c2);*/
+                                                v1[x] = v1[x - 1] + 1;
+#endif
                                             }
                                         }
 
@@ -1019,7 +1051,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                             }
                             else
                             {
-                                stringArena.used = stringArenaSavedUsed;
+                                arena->used = stringArenaSavedUsed;
                             }
                         }
                     }
