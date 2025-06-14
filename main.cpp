@@ -1,0 +1,1162 @@
+#include <windows.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+
+#define ASSERT(x) if(!(x)){*((int*)0) = 1;}
+#define ARRAY_COUNT(a) (sizeof(a)/sizeof((a)[0]))
+
+#define KILOBYTES(x) (1024LL*(x))
+#define MEGABYTES(x) (1024LL*KILOBYTES(x))
+#define GIGABYTES(x) (1024LL*MEGABYTES(x))
+
+//
+// Arena
+//
+
+struct Arena
+{
+    void* base;
+    size_t size;
+    size_t used;
+};
+
+static Arena makeArena(void* base, size_t size)
+{
+    Arena arena = {};
+    arena.base = base;
+    arena.size = size;
+    return arena;
+}
+
+static void* pushSize(Arena* arena, size_t size)
+{
+    void* result = (char*)arena->base + arena->used;
+    ASSERT(arena->used + size <= arena->size);
+    arena->used += size;
+    return result;
+}
+
+static Arena makeSubArena(Arena* arena, size_t size)
+{
+    Arena result = {};
+    result.size = size;
+    result.base = pushSize(arena, size);
+    return result;
+}
+
+#define pushType(arena, type) (type*) pushSize(arena, sizeof(type))
+#define pushArray(arena, type, count) (type*) pushSize(arena, (count) * sizeof(type))
+#define pushString(arena, length) pushArray(arena, char, (length) + 1)
+
+//
+//
+
+struct AtomNameSet
+{
+    const char** names;
+    int count;
+    int capacity;
+};
+
+struct Replacement
+{
+    char atom;
+    char* molecule;
+};
+
+struct ReplacementList
+{
+    Replacement* replacements;
+    int count;
+    int capacity;
+};
+
+struct ParseResult
+{
+    AtomNameSet atomNames;
+    ReplacementList replacements;
+    char* goal;
+};
+
+struct HeapNode
+{
+    char* molecule;
+    int score; // The higher the score, the closer the given molecule to the goal
+    int steps; // The number of replacements made to the start molecule to get to the given molecule
+};
+
+struct Heap
+{
+    HeapNode* nodes;
+    int count;
+    int capacity;
+};
+
+//
+// Strings
+//
+
+static bool isUppercase(char c)
+{
+    return c >= 'A' && c <= 'Z';
+}
+
+static bool isLowercase(char c)
+{
+    return c >= 'a' && c <= 'z';
+}
+
+static bool stringsAreEqual(const char* a, const char* b)
+{
+    bool result;
+    while (true)
+    {
+        if (*a == *b)
+        {
+            if (*a)
+            {
+                ++a;
+                ++b;
+            }
+            else
+            {
+                result = true;
+                break;
+            }
+        }
+        else
+        {
+            result = false;
+            break;
+        }
+    }
+    return result;
+}
+
+//
+// String Set
+//
+
+struct StringSet
+{
+    char** strings;
+    size_t count;
+    size_t capacity;
+};
+
+static StringSet makeStringSet(Arena* arena, int capacity)
+{
+    StringSet set = {};
+    set.strings = pushArray(arena, char*, capacity);
+    for (int i = 0; i < capacity; ++i)
+    {
+        set.strings[i] = 0;
+    }
+    set.capacity = capacity;
+    return set;
+}
+
+static void clearStringSet(StringSet* set)
+{
+    set->count = 0;
+    for (int i = 0; i < set->capacity; ++i)
+    {
+        set->strings[i] = 0;
+    }
+}
+
+static long long computeStringHash(const char* s) {
+    const int p = 31;
+    const int m = (int)1e9 + 9;
+    long long result = 0;
+    long long pPow = 1;
+    while (*s)
+    {
+        result = (result + (*s) * pPow) % m;
+        pPow = (pPow * p) % m;
+        ++s;
+    }
+    return result;
+}
+
+static bool addStringToSet(StringSet* set, char* toAdd)
+{
+    ASSERT(set->count < set->capacity);
+    bool added;
+    long long hash = computeStringHash(toAdd);
+    size_t index = hash % set->capacity;
+    while (true)
+    {
+        ASSERT(index < set->capacity);
+        if (set->strings[index])
+        {
+            if (stringsAreEqual(set->strings[index], toAdd))
+            {
+                added = false;
+                break;
+            }
+            else
+            {
+                index = (index + 1) % set->capacity;
+            }
+        }
+        else
+        {
+            added = true;
+            ++set->count;
+            set->strings[index] = toAdd;
+            break;
+        }
+    }
+    return added;
+}
+
+//
+//
+//
+
+static Heap makeHeap(Arena* arena, int capacity)
+{
+    Heap result = {};
+    result.capacity = capacity;
+    result.nodes = pushArray(arena, HeapNode, capacity);
+    return result;
+}
+
+static void insert(Heap* heap, char* molecule, int score, int steps)
+{
+    int newIndex = heap->count;
+    ASSERT(newIndex < heap->capacity);
+
+    ++heap->count;
+
+    heap->nodes[newIndex].molecule = molecule;
+    heap->nodes[newIndex].score = score;
+    heap->nodes[newIndex].steps = steps;
+
+    // Bubble up
+    while (newIndex > 0)
+    {
+        int parentIndex = (newIndex - 1) / 2;
+        if (heap->nodes[parentIndex].score > score)
+        {
+            HeapNode tmp = heap->nodes[parentIndex];
+            heap->nodes[parentIndex] = heap->nodes[newIndex];
+            heap->nodes[newIndex] = tmp;
+            newIndex = parentIndex;
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+static HeapNode removeTop(Heap* heap)
+{
+    ASSERT(heap->count > 0);
+    HeapNode result = heap->nodes[0];
+    --heap->count;
+    if (heap->count > 0)
+    {
+        int newIndex = 0;
+        heap->nodes[newIndex] = heap->nodes[heap->count];
+
+        // Bubble-down
+        while (true)
+        {
+            int leftChildIndex = newIndex * 2 + 1;
+            if (leftChildIndex < heap->count)
+            {
+                int smallerChildIndex;
+                int rightChildIndex = newIndex * 2 + 2;
+                if (rightChildIndex < heap->count)
+                {
+                    smallerChildIndex = heap->nodes[leftChildIndex].score < heap->nodes[rightChildIndex].score ? leftChildIndex : rightChildIndex;
+                }
+                else
+                {
+                    smallerChildIndex = leftChildIndex;
+                }
+                if (heap->nodes[newIndex].score > heap->nodes[smallerChildIndex].score)
+                {
+                    HeapNode tmp = heap->nodes[newIndex];
+                    heap->nodes[newIndex] = heap->nodes[smallerChildIndex];
+                    heap->nodes[smallerChildIndex] = tmp;
+                    newIndex = smallerChildIndex;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+    return result;
+}
+
+static int getStringLength(const char* str)
+{
+    int result = 0;
+    while (*str)
+    {
+        ++result;
+        ++str;
+    }
+    return result;
+}
+
+static void intToString(int n, char* buf)
+{
+    ASSERT(n >= 0);
+    int digitsCount;
+    if (n == 0)
+    {
+        digitsCount = 1;
+    }
+    else
+    {
+        digitsCount = 0;
+        for (int i = n; i > 0; i /= 10)
+        {
+            ++digitsCount;
+        }
+    }
+
+    for (int index = digitsCount - 1; index >= 0; --index, n /= 10)
+    {
+        int digit = n % 10;
+        buf[index] = '0' + (char)digit;
+    }
+
+    buf[digitsCount] = 0;
+}
+
+static void printLine(const char* str)
+{
+    HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (stdoutHandle != NULL && stdoutHandle != INVALID_HANDLE_VALUE)
+    {
+        WriteConsoleA(stdoutHandle, str, getStringLength(str), NULL, NULL);
+        WriteConsoleA(stdoutHandle, "\n", 1, NULL, NULL);
+    }
+}
+
+static int getReplacementsCount(char* input)
+{
+    int result = 0;
+    while (true)
+    {
+        if (*input == '\n')
+        {
+            ++result;
+            ++input;
+            if (*input == '\n')
+            {
+                break;
+            }
+        }
+        else
+        {
+            ++input;
+        }
+    }
+    return result;
+}
+
+static bool isWhitespace(char c)
+{
+    bool result;
+    switch (c)
+    {
+    case ' ':
+    case '\n':
+    case '\t':
+        result = true;
+        break;
+    default:
+        result = false;
+        break;
+    }
+    return result;
+}
+
+static void skipWhitespace(char** input)
+{
+    while (isWhitespace(**input))
+    {
+        ++(*input);
+    }
+}
+
+static void skipString(char** input, const char* str)
+{
+    skipWhitespace(input);
+    while (*str)
+    {
+        if (**input == *str)
+        {
+            ++(*input);
+            ++str;
+        }
+        else
+        {
+            ASSERT(0);
+        }
+    }
+}
+
+static int getWordLength(char* input)
+{
+    int result = 0;
+    while (!isWhitespace(*input))
+    {
+        ++result;
+        ++input;
+    }
+    return result;
+}
+
+static char* extractWord(Arena* arena, char** input)
+{
+    skipWhitespace(input);
+    int wordLength = getWordLength(*input);
+    char* result = pushString(arena, wordLength);
+    for (int letterIndex = 0; letterIndex < wordLength; ++letterIndex, ++(*input))
+    {
+        result[letterIndex] = **input;
+    }
+    result[wordLength] = 0;
+    return result;
+}
+
+static int getRawAtomLength(const char* str)
+{
+    int length = 0;
+    if (*str == 'e')
+    {
+        length = 1;
+    }
+    else
+    {
+        if (isUppercase(*str))
+        {
+            ++length;
+            ++str;
+            while (isLowercase(*str))
+            {
+                ++length;
+                ++str;
+            }
+        }
+    }
+    return length;
+}
+
+static char* extractRawAtom(Arena* arena, const char** input)
+{
+    int length = getRawAtomLength(*input);
+    ASSERT(length > 0);
+    char* rawAtom = pushString(arena, length);
+    for (int letterIndex = 0; letterIndex < length; ++letterIndex)
+    {
+        rawAtom[letterIndex] = **input;
+        ++(*input);
+    }
+    rawAtom[length] = 0;
+    return rawAtom;
+}
+
+static char encodeAtom(AtomNameSet* atomNames, const char* rawAtom)
+{
+    int index = -1;
+    for (int atomIndex = 0; atomIndex < atomNames->count; ++atomIndex)
+    {
+        if (stringsAreEqual(atomNames->names[atomIndex], rawAtom))
+        {
+            index = atomIndex;
+        }
+    }
+
+    if (index == -1)
+    {
+        index = atomNames->count;
+        ASSERT(atomNames->count < atomNames->capacity);
+        atomNames->names[atomNames->count] = rawAtom;
+        ++atomNames->count;
+    }
+
+    char result = 'A' + (char)index;
+    return result;
+}
+
+static int getRawMoleculeAtomCount(const char* rawMolecule)
+{
+    int atomCount;
+    if (*rawMolecule == 'e')
+    {
+        atomCount = 1;
+    }
+    else
+    {
+        atomCount = 0;
+        while (*rawMolecule)
+        {
+            if (isUppercase(*rawMolecule))
+            {
+                ++atomCount;
+                ++rawMolecule;
+            }
+            else if (isLowercase(*rawMolecule))
+            {
+                ++rawMolecule;
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+    return atomCount;
+}
+
+static char* encodeMolecule(Arena* arena, AtomNameSet* atomNames, const char* rawMolecule)
+{
+    int atomCount = getRawMoleculeAtomCount(rawMolecule);
+    ASSERT(atomCount > 0);
+    char* result = pushString(arena, atomCount);
+    for (int atomIndex = 0; atomIndex < atomCount; ++atomIndex)
+    {
+        char* rawAtom = extractRawAtom(arena, &rawMolecule);
+        result[atomIndex] = encodeAtom(atomNames, rawAtom);
+    }
+    result[atomCount] = 0;
+    return result;
+}
+
+static const char* decodeAtom(char atom, AtomNameSet* atomNames)
+{
+    int index = atom - 'A';
+    ASSERT(index < atomNames->count);
+    const char* result = atomNames->names[index];
+    return result;
+}
+
+static void decodeMolecule(const char* molecule, AtomNameSet* atomNames, char* buf, int bufSize)
+{
+    int len = 0;
+    while (*molecule)
+    {
+        const char* decodedAtom = decodeAtom(*molecule, atomNames);
+        while (*decodedAtom)
+        {
+            buf[len] = *decodedAtom;
+            ++len;
+            ++decodedAtom;
+        }
+        ++molecule;
+    }
+    ASSERT(len < bufSize);
+    buf[len] = 0;
+}
+
+static Replacement extractReplacement(Arena* arena, AtomNameSet* atomNames, char** input)
+{
+    Replacement result = {};
+    char* atomWord = extractWord(arena, input);
+    result.atom = encodeAtom(atomNames, atomWord);
+    skipString(input, "=>");
+    char* moleculeWord = extractWord(arena, input);
+    result.molecule = encodeMolecule(arena, atomNames, moleculeWord);
+    return result;
+}
+
+static AtomNameSet makeAtomNameSet(Arena* arena, int capacity)
+{
+    AtomNameSet result = {};
+    result.capacity = capacity;
+    result.names = pushArray(arena, const char*, capacity);
+    return result;
+}
+
+static ReplacementList makeReplacementList(Arena* arena, int capacity)
+{
+    ReplacementList result = {};
+    result.capacity = capacity;
+    result.replacements = pushArray(arena, Replacement, capacity);
+    return result;
+}
+
+static ParseResult parseInput(Arena* arena, char* input)
+{
+    ParseResult result = {};
+
+    result.atomNames = makeAtomNameSet(arena, 128);
+
+    int replacementsCount = getReplacementsCount(input);
+    result.replacements = makeReplacementList(arena, replacementsCount);
+    result.replacements.count = replacementsCount;
+
+    for (int replacementIndex = 0; replacementIndex < replacementsCount; ++replacementIndex)
+    {
+        skipWhitespace(&input);
+        result.replacements.replacements[replacementIndex] = extractReplacement(arena, &result.atomNames, &input);
+    }
+
+    skipWhitespace(&input);
+    result.goal = encodeMolecule(arena, &result.atomNames, input);
+
+    return result;
+}
+
+static char* readEntireFile(Arena* arena, const char* path)
+{
+    char* result = nullptr;
+
+    HANDLE fileHandle = CreateFileA(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (fileHandle != INVALID_HANDLE_VALUE)
+    {
+        LARGE_INTEGER fileSize;
+        if (GetFileSizeEx(fileHandle, &fileSize))
+        {
+            char* buffer = pushString(arena, fileSize.LowPart);
+            if (buffer)
+            {
+                DWORD bytesRead;
+                if (ReadFile(fileHandle, buffer, fileSize.LowPart, &bytesRead, NULL) && bytesRead == fileSize.LowPart)
+                {
+                    buffer[fileSize.LowPart] = 0;
+                    result = buffer;
+                }
+                else
+                {
+                    arena->used = 0;
+                }
+            }
+        }
+        CloseHandle(fileHandle);
+    }
+
+    return result;
+}
+
+static void getMoleculesAfterOneReplacement(const char* molecule, ReplacementList* replacements, Arena* stringArena, StringSet* stringSet)
+{
+    int moleculeLen = getStringLength(molecule);
+    for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
+    {
+        Replacement* replacement = &replacements->replacements[replacementIndex];
+        int toLen = getStringLength(replacement->molecule);
+        for (int atomIndex = 0; atomIndex < moleculeLen; ++atomIndex)
+        {
+            if (molecule[atomIndex] == replacement->atom)
+            {
+                int newMoleculeLen = moleculeLen + toLen - 1;
+                size_t stringArenaSavedUsed = stringArena->used;
+                char* newMolecule = pushString(stringArena, newMoleculeLen);
+
+                int newIndex = 0;
+                for (int prefixIndex = 0; prefixIndex < atomIndex; ++prefixIndex, ++newIndex)
+                {
+                    newMolecule[newIndex] = molecule[prefixIndex];
+                }
+                for (int toAtomIndex = 0; toAtomIndex < toLen; ++toAtomIndex, ++newIndex)
+                {
+                    newMolecule[newIndex] = replacement->molecule[toAtomIndex];
+                }
+                for (int suffixIndex = atomIndex + 1; suffixIndex < moleculeLen; ++suffixIndex, ++newIndex)
+                {
+                    newMolecule[newIndex] = molecule[suffixIndex];
+                }
+                ASSERT(newIndex == newMoleculeLen);
+                newMolecule[newMoleculeLen] = 0;
+
+                if (!addStringToSet(stringSet, newMolecule))
+                {
+                    stringArena->used = stringArenaSavedUsed;
+                }
+            }
+        }
+    }
+}
+
+struct StringSlice
+{
+    int startIndex;
+    int len;
+};
+
+static StringSlice findMaxSubstring(const char* const a, const char* const b)
+{
+    StringSlice result = {};
+    int aLen = getStringLength(a);
+    int bLen = getStringLength(b);
+
+    int bIndex = 0;
+    for (int aStart = 0; aStart < aLen && bIndex < bLen;)
+    {
+        if (a[aStart] == b[bIndex])
+        {
+            int substringLength = 0;
+            for (int aIndex = aStart; aIndex < aLen && bIndex < bLen;)
+            {
+                if (a[aIndex] == b[bIndex])
+                {
+                    ++substringLength;
+                    ++aIndex;
+                    ++bIndex;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            if (substringLength > result.len)
+            {
+                result.len = substringLength;
+                result.startIndex = aStart;
+            }
+        }
+        else
+        {
+            ++bIndex;
+            if (bIndex == bLen)
+            {
+                bIndex = 0;
+                ++aStart;
+            }
+        }
+    }
+
+
+    return result;
+}
+
+static void testFindMaxSubstring()
+{
+    StringSlice result;
+
+    result = findMaxSubstring("", "");
+    ASSERT(result.startIndex == 0 && result.len == 0);
+
+    result = findMaxSubstring("A", "A");
+    ASSERT(result.startIndex == 0 && result.len == 1);
+
+    result = findMaxSubstring("A", "B");
+    ASSERT(result.startIndex == 0 && result.len == 0);
+
+    result = findMaxSubstring("ABC", "AABBABC");
+    ASSERT(result.startIndex == 0 && result.len == 3);
+
+    result = findMaxSubstring("ABC", "AXBC");
+    ASSERT(result.startIndex == 1 && result.len == 2);
+
+    result = findMaxSubstring("ABxdC", "AXBAABCffBxdsdC");
+    ASSERT(result.startIndex == 1 && result.len == 3);
+
+    result = findMaxSubstring("ABxdC", "AXBAABCffBxBxdsdC");
+    ASSERT(result.startIndex == 1 && result.len == 3);
+
+    result = findMaxSubstring("ABCD", "ABCD");
+    ASSERT(result.startIndex == 0 && result.len == 4);
+
+    result = findMaxSubstring("ABC", "AAABBABCCC");
+    ASSERT(result.startIndex == 0 && result.len == 3);
+}
+
+static int minimum(int a, int b, int c)
+{
+    int result;
+    if (a < b)
+    {
+        if (a < c)
+        {
+            result = a;
+        }
+        else
+        {
+            // c <= a < b
+            result = c;
+        }
+    }
+    else
+    {
+        // b <= a
+        if (b < c)
+        {
+            result = b;
+        }
+        else
+        {
+            // c <= b <= a
+            result = c;
+        }
+    }
+    return result;
+}
+
+static int computeLovenshteinDistance(const char* a, const char* b)
+{
+    int aLen = getStringLength(a);
+    int bLen = getStringLength(b);
+    constexpr int maxLen = 600;
+    ASSERT(aLen < maxLen);
+    ASSERT(bLen < maxLen);
+    int row0[maxLen] = {};
+    int row1[maxLen] = {};
+
+    int* v0 = row0;
+    int* v1 = row1;
+
+    for (int x = 0; x < aLen + 1; ++x)
+    {
+        v0[x] = x;
+    }
+
+    for (int y = 1; y < bLen + 1; ++y)
+    {
+        v1[0] = y;
+
+        for (int x = 1; x < aLen + 1; ++x)
+        {
+            if (a[x - 1] == b[y - 1])
+            {
+                v1[x] = v0[x - 1];
+            }
+            else
+            {
+                int c1 = v0[x - 1];
+                int c2 = v0[x];
+                int c3 = v1[x - 1];
+                v1[x] = 1 + minimum(c1, c2, c3);
+            }
+        }
+
+        int* tmp = v0;
+        v0 = v1;
+        v1 = tmp;
+    }
+
+    int result = v0[aLen];
+    return result;
+}
+
+static void testComputeLovenshteinDistance()
+{
+    ASSERT(computeLovenshteinDistance("kitten", "sitting") == 3);
+    ASSERT(computeLovenshteinDistance("sitting", "kitten") == 3);
+    ASSERT(computeLovenshteinDistance("saturday", "sunday") == 3);
+    ASSERT(computeLovenshteinDistance("sunday", "saturday") == 3);
+    ASSERT(computeLovenshteinDistance("", "") == 0);
+    ASSERT(computeLovenshteinDistance("a", "a") == 0);
+    ASSERT(computeLovenshteinDistance("a", "") == 1);
+    ASSERT(computeLovenshteinDistance("", "a") == 1);
+    ASSERT(computeLovenshteinDistance("ab", "") == 2);
+    ASSERT(computeLovenshteinDistance("", "ab") == 2);
+    ASSERT(computeLovenshteinDistance("a", "b") == 1);
+    ASSERT(computeLovenshteinDistance("uninformed", "uniformed") == 1);
+}
+
+static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* replacements, AtomNameSet* atomNames)
+{
+    size_t savedArenaUsed = arena->used;
+
+    Arena stringArena = makeSubArena(arena, GIGABYTES(16));
+    StringSet allStringsSet = makeStringSet(arena, 1000000087);
+    Heap heap = makeHeap(arena, 1024 * 1024 * 100);
+
+    int goalLen = getStringLength(goal);
+
+    char* startMolecule = encodeMolecule(arena, atomNames, "e");
+    insert(&heap, startMolecule, computeLovenshteinDistance(startMolecule, goal), 0);
+
+    int result = -1;
+
+    size_t debugCounter = 0;
+    time_t timerStart = time(NULL);
+
+    while (result < 0)
+    {
+        HeapNode top = removeTop(&heap);
+
+        int moleculeLen = getStringLength(top.molecule);
+
+        ++debugCounter;
+        if (debugCounter % 100 == 0)
+        {
+            time_t timerCurrent = time(NULL);
+
+            printf("\n");
+            printf("Seconds: %jd\n", timerCurrent - timerStart);
+            printf("Tops removed: %zu\n", debugCounter);
+            printf("Top score | steps: %d / %d | %d\n", top.score, goalLen, top.steps);
+            printf("String arena used: %zu / %zu (%f)\n", stringArena.used, stringArena.size, (float)stringArena.used / stringArena.size);
+            printf("String set used: %zu / %zu (%f)\n", allStringsSet.count, allStringsSet.capacity, (float)allStringsSet.count / allStringsSet.capacity);
+            printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
+
+            StringSlice slice = findMaxSubstring(top.molecule, goal);
+
+            int i = 0;
+            for (; i < slice.startIndex; ++i)
+            {
+                printf("%c", top.molecule[i]);
+            }
+            printf(" << ");
+            for (; i < slice.startIndex + slice.len; ++i)
+            {
+                printf("%c", top.molecule[i]);
+            }
+            printf(" >> ");
+            for (; i < moleculeLen; ++i)
+            {
+                printf("%c", top.molecule[i]);
+            }
+            printf("\n");
+        }
+
+        if (top.score == 0)
+        {
+            result = top.steps;
+        }
+        else
+        {
+            for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
+            {
+                Replacement* replacement = &replacements->replacements[replacementIndex];
+                int toLen = getStringLength(replacement->molecule);
+                for (int atomIndex = 0; atomIndex < moleculeLen; ++atomIndex)
+                {
+                    if (top.molecule[atomIndex] == replacement->atom)
+                    {
+                        int newMoleculeLen = moleculeLen + toLen - 1;
+
+                        if (newMoleculeLen <= goalLen)
+                        {
+                            size_t stringArenaSavedUsed = stringArena.used;
+                            char* newMolecule = pushString(&stringArena, newMoleculeLen);
+
+                            int newIndex = 0;
+                            for (int prefixIndex = 0; prefixIndex < atomIndex; ++prefixIndex, ++newIndex)
+                            {
+                                newMolecule[newIndex] = top.molecule[prefixIndex];
+                            }
+                            for (int toAtomIndex = 0; toAtomIndex < toLen; ++toAtomIndex, ++newIndex)
+                            {
+                                newMolecule[newIndex] = replacement->molecule[toAtomIndex];
+                            }
+                            for (int suffixIndex = atomIndex + 1; suffixIndex < moleculeLen; ++suffixIndex, ++newIndex)
+                            {
+                                newMolecule[newIndex] = top.molecule[suffixIndex];
+                            }
+                            ASSERT(newIndex == newMoleculeLen);
+                            newMolecule[newMoleculeLen] = 0;
+
+                            if (addStringToSet(&allStringsSet, newMolecule))
+                            {
+                                int score;
+                                {
+                                    size_t arenaSavedUsed = arena->used;
+
+                                    const char* a = newMolecule;
+                                    const char* b = goal;
+
+                                    int aLen = newMoleculeLen;
+                                    int bLen = goalLen;
+                                    int* row0 = pushArray(arena, int, aLen + 1);
+                                    int* row1 = pushArray(arena, int, aLen + 1);
+
+                                    int* v0 = row0;
+                                    int* v1 = row1;
+
+                                    for (int x = 0; x < aLen + 1; ++x)
+                                    {
+                                        v0[x] = x;
+                                    }
+
+                                    for (int y = 1; y < bLen + 1; ++y)
+                                    {
+                                        v1[0] = y;
+
+                                        for (int x = 1; x < aLen + 1; ++x)
+                                        {
+                                            if (a[x - 1] == b[y - 1])
+                                            {
+                                                v1[x] = v0[x - 1];
+                                            }
+                                            else
+                                            {
+                                                int c1 = v0[x - 1];
+                                                int c2 = v0[x];
+                                                int c3 = v1[x - 1];
+                                                v1[x] = 1 + minimum(c1, c2, c3);
+                                            }
+                                        }
+
+                                        int* tmp = v0;
+                                        v0 = v1;
+                                        v1 = tmp;
+                                    }
+
+                                    arena->used = arenaSavedUsed;
+                                    score = v0[aLen];
+                                }
+                                
+                                insert(&heap, newMolecule, score, top.steps + 1);
+                            }
+                            else
+                            {
+                                stringArena.used = stringArenaSavedUsed;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    arena->used = savedArenaUsed;
+
+    return result;
+}
+
+static void addReplacement(ReplacementList* list, Arena* arena, AtomNameSet* atomNames, const char* rawAtom, const char* rawMolecule)
+{
+    ASSERT(list->count < list->capacity);
+    list->replacements[list->count].atom = encodeAtom(atomNames, rawAtom);
+    list->replacements[list->count].molecule = encodeMolecule(arena, atomNames, rawMolecule);
+    ++list->count;
+}
+
+static void printMoleculesInSet(StringSet* set, AtomNameSet* atomNames)
+{
+    for (int i = 0; i < set->capacity; ++i)
+    {
+        if (set->strings[i])
+        {
+            char decodedMolecule[512];
+            decodeMolecule(set->strings[i], atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            printf("%s\n", decodedMolecule);
+        }
+    }
+}
+
+static void testExample1(Arena* arena)
+{
+    size_t savedArenaUsed = arena->used;
+
+    AtomNameSet atomNames = makeAtomNameSet(arena, 64);
+    ReplacementList replacements = makeReplacementList(arena, 16);
+
+    addReplacement(&replacements, arena, &atomNames, "H", "HO");
+    addReplacement(&replacements, arena, &atomNames, "H", "OH");
+    addReplacement(&replacements, arena, &atomNames, "O", "HH");
+
+    char* goal = encodeMolecule(arena, &atomNames, "HOH");
+    StringSet stringSet = makeStringSet(arena, 16);
+    getMoleculesAfterOneReplacement(goal, &replacements, arena, &stringSet);
+
+    ASSERT(stringSet.count == 4);
+
+#if 0
+    printMoleculesInSet(&stringSet, &atomNames);
+#endif
+
+    arena->used = savedArenaUsed;
+}
+
+static void testExample2(Arena* arena)
+{
+    size_t savedArenaUsed = arena->used;
+
+    AtomNameSet atomNames = makeAtomNameSet(arena, 64);
+    ReplacementList replacements = makeReplacementList(arena, 16);
+
+    addReplacement(&replacements, arena, &atomNames, "e", "H");
+    addReplacement(&replacements, arena, &atomNames, "e", "O");
+    addReplacement(&replacements, arena, &atomNames, "H", "HO");
+    addReplacement(&replacements, arena, &atomNames, "H", "OH");
+    addReplacement(&replacements, arena, &atomNames, "O", "HH");
+
+    char* goal1 = encodeMolecule(arena, &atomNames, "HOH");
+    int answer1 = findStepsToGoal(arena, goal1, &replacements, &atomNames);
+    ASSERT(answer1 == 3);
+
+    char* goal2 = encodeMolecule(arena, &atomNames, "HOHOHO");
+    int answer2 = findStepsToGoal(arena, goal2, &replacements, &atomNames);
+    ASSERT(answer2 == 6);
+
+    arena->used = savedArenaUsed;
+}
+
+static void doPart1(Arena* arena, ParseResult* parseResult)
+{
+    size_t savedArenaUsed = arena->used;
+    StringSet stringSet = makeStringSet(arena, 2029);
+    getMoleculesAfterOneReplacement(parseResult->goal, &parseResult->replacements, arena, &stringSet);
+    ASSERT(stringSet.count == 518);
+    arena->used = savedArenaUsed;
+}
+
+static void doPart2(Arena* arena, ParseResult* parseResult)
+{
+    int answer = findStepsToGoal(arena, parseResult->goal, &parseResult->replacements, &parseResult->atomNames);
+    char buf[64];
+    intToString(answer, buf);
+    printLine(buf);
+}
+
+int main()
+{
+    size_t arenaSize = GIGABYTES(27);
+    void* memory = VirtualAlloc(NULL, arenaSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    ASSERT(memory);
+    Arena arena = makeArena(memory, arenaSize);
+
+    printf("testComputeLovenshteinDistance()...");
+    testComputeLovenshteinDistance();
+    printf("OK\n");
+
+    printf("testFindMaxSubstring()...");
+    testFindMaxSubstring();
+    printf("OK\n");
+
+    printf("testExample1()...");
+    testExample1(&arena);
+    printf("OK\n");
+
+    printf("testExample2()...");
+    testExample2(&arena);
+    printf("OK\n");
+
+    char* input = readEntireFile(&arena, "input.txt");
+    if (input)
+    {
+        ParseResult parseResult = parseInput(&arena, input);
+        printf("doPart1()...");
+        printf("OK\n");
+        doPart1(&arena, &parseResult);
+        printf("doPart2()...");
+        doPart2(&arena, &parseResult);
+        printf("OK\n");
+    }
+    else
+    {
+        printLine("Failed to read input file");
+    }
+
+    return 0;
+}
