@@ -224,6 +224,15 @@ static Heap makeHeap(Arena* arena, int capacity)
     return result;
 }
 
+static bool isGreater(HeapNode* a, HeapNode* b)
+{
+    if (a->matchedPrefixLength == b->matchedPrefixLength)
+    {
+        return a->steps < b->steps;
+    }
+    return a->matchedPrefixLength > b->matchedPrefixLength;
+}
+
 static void insert(Heap* heap, char* molecule, int matchedPrefixLength, int steps)
 {
     int newIndex = heap->count;
@@ -239,7 +248,7 @@ static void insert(Heap* heap, char* molecule, int matchedPrefixLength, int step
     while (newIndex > 0)
     {
         int parentIndex = (newIndex - 1) / 2;
-        if (heap->nodes[parentIndex].matchedPrefixLength < matchedPrefixLength)
+        if (isGreater(&heap->nodes[newIndex], &heap->nodes[parentIndex]))
         {
             HeapNode tmp = heap->nodes[parentIndex];
             heap->nodes[parentIndex] = heap->nodes[newIndex];
@@ -269,22 +278,22 @@ static HeapNode removeTop(Heap* heap)
             int leftChildIndex = newIndex * 2 + 1;
             if (leftChildIndex < heap->count)
             {
-                int biggerChildIndex;
+                int greaterChildIndex;
                 int rightChildIndex = newIndex * 2 + 2;
                 if (rightChildIndex < heap->count)
                 {
-                    biggerChildIndex = heap->nodes[leftChildIndex].matchedPrefixLength > heap->nodes[rightChildIndex].matchedPrefixLength ? leftChildIndex : rightChildIndex;
+                    greaterChildIndex = isGreater(&heap->nodes[leftChildIndex], &heap->nodes[rightChildIndex]) ? leftChildIndex : rightChildIndex;
                 }
                 else
                 {
-                    biggerChildIndex = leftChildIndex;
+                    greaterChildIndex = leftChildIndex;
                 }
-                if (heap->nodes[newIndex].matchedPrefixLength < heap->nodes[biggerChildIndex].matchedPrefixLength)
+                if (isGreater(&heap->nodes[greaterChildIndex], &heap->nodes[newIndex]))
                 {
                     HeapNode tmp = heap->nodes[newIndex];
-                    heap->nodes[newIndex] = heap->nodes[biggerChildIndex];
-                    heap->nodes[biggerChildIndex] = tmp;
-                    newIndex = biggerChildIndex;
+                    heap->nodes[newIndex] = heap->nodes[greaterChildIndex];
+                    heap->nodes[greaterChildIndex] = tmp;
+                    newIndex = greaterChildIndex;
                 }
                 else
                 {
@@ -778,32 +787,56 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
 
     size_t topsRemovedCount = 0;
     time_t startTime = time(NULL);
+    char decodedMolecule[1024];
+    int prefixLenToSkip = 0;
 
     while (result < 0)
     {
+        printf("\n");
+
+        printf("%d| Top of heap:\n", topsRemovedCount);
+
+        int N = 10;
+        if (heap.count < N)
+        {
+            N = heap.count;
+        }
+        char decodedMolecule[1024];
+        for (int index = 0; index < N; ++index)
+        {
+            HeapNode* node = &heap.nodes[index];
+            decodeMolecule(node->molecule + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            printf("%d: %d|%d|%s\n", index, node->matchedPrefixLength, node->steps, decodedMolecule);
+        }
+        printf("\n");
+
         HeapNode top = removeTop(&heap);
         int topMoleculeLen = getStringLength(top.molecule);
+
+        prefixLenToSkip = top.matchedPrefixLength;
+        if (*(top.molecule + prefixLenToSkip) == 0 || *(goal + prefixLenToSkip) == 0)
+        {
+            --prefixLenToSkip;
+        }
 
         ++topsRemovedCount;
         if (topsRemovedCount % 1 == 0)
         {
             time_t now = time(NULL);
 
-            printf("\n");
-            printf("Seconds: %jd\n", now - startTime);
-            printf("Tops removed: %zu\n", topsRemovedCount);
-            printf("Top matched prefix length: %d\n", top.matchedPrefixLength);
-            printf("Top steps: %d\n", top.steps);
-            printf("Top / goal len: %d / %d\n", topMoleculeLen, goalLen);
-            printf("Arena used: %zu / %zu (%f)\n", arena->used, arena->size, (float)arena->used / arena->size);
-            printf("String set used: %zu / %zu (%f)\n", stringSet.count, stringSet.capacity, (float)stringSet.count / stringSet.capacity);
-            printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
+            //printf("Seconds: %jd\n", now - startTime);
+            //printf("Tops removed: %zu\n", topsRemovedCount);
+            //printf("Top matched prefix length: %d\n", top.matchedPrefixLength);
+            //printf("Top steps: %d\n", top.steps);
+            //printf("Top / goal len: %d / %d\n", topMoleculeLen, goalLen);
+            //printf("Arena used: %zu / %zu (%f)\n", arena->used, arena->size, (float)arena->used / arena->size);
+            //printf("String set used: %zu / %zu (%f)\n", stringSet.count, stringSet.capacity, (float)stringSet.count / stringSet.capacity);
+            //printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
             
-            char decodedMolecule[1024];
-            decodeMolecule(top.molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            decodeMolecule(top.molecule + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
             printf("%s\n", decodedMolecule);
 
-            decodeMolecule(goal, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            decodeMolecule(goal + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
             printf("%s\n", decodedMolecule);
         }
 
@@ -817,24 +850,28 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
             if (top.matchedPrefixLength == topMoleculeLen)
             {
                 --top.matchedPrefixLength;
+                ASSERT(top.molecule[top.matchedPrefixLength] == goal[top.matchedPrefixLength]);
             }
             else
             {
                 ASSERT(top.matchedPrefixLength < topMoleculeLen);
                 ASSERT(top.molecule[top.matchedPrefixLength] != goal[top.matchedPrefixLength]);
             }
+            printf("Replacing: %s -> %s\n", decodeAtom(top.molecule[top.matchedPrefixLength], atomNames), decodeAtom(goal[top.matchedPrefixLength], atomNames));
             for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
             {
                 Replacement* replacement = &replacements->replacements[replacementIndex];
                 int toLen = getStringLength(replacement->molecule);
                 if (replacement->atom == top.molecule[top.matchedPrefixLength])
                 {
+                    decodeMolecule(replacement->molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+                    printf("-- Possible replacement: %s > ", decodedMolecule);
                     if (canReach(&reachabilityMatrix, replacement->molecule[0], goal[top.matchedPrefixLength]))
                     {
                         int newMoleculeLen = topMoleculeLen + toLen - 1;
                         if (newMoleculeLen <= goalLen)
                         {
-                            int savedArenaUsed2 = arena->used;
+                            size_t savedArenaUsed2 = arena->used;
                             char* newMolecule = pushString(arena, newMoleculeLen);
 
                             int newIndex = 0;
@@ -853,6 +890,9 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                             ASSERT(newIndex == newMoleculeLen);
                             newMolecule[newMoleculeLen] = 0;
 
+                            decodeMolecule(newMolecule + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+                            printf("%s", decodedMolecule);
+
                             if (addStringToSet(&stringSet, newMolecule))
                             {
                                 int newMatchedPrefixLength = 0;
@@ -864,17 +904,29 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                                 ASSERT(newMatchedPrefixLength >= top.matchedPrefixLength);
 
                                 int newSteps = top.steps + 1;
+                                printf("|%d|%d\n", newMatchedPrefixLength, newSteps);
                                 insert(&heap, newMolecule, newMatchedPrefixLength, newSteps);
                             }
                             else
                             {
+                                printf("already seen, skip\n");
                                 arena->used = savedArenaUsed2;
                             }
                         }
+                        else
+                        {
+                            printf("len > goalLen, skip\n");
+                        }
+                    }
+                    else
+                    {
+                        printf("can't reach, skip\n");
                     }
                 }
             }
         }
+
+        getc(stdin);
     }
 
     arena->used = savedArenaUsed;
@@ -975,21 +1027,21 @@ int main()
     ASSERT(memory);
     Arena arena = makeArena(memory, arenaSize);
 
-    printf("testExample1()...");
-    testExample1(&arena);
-    printf("OK\n");
+    //printf("testExample1()...");
+    //testExample1(&arena);
+    //printf("OK\n");
 
-    printf("testExample2()...");
-    testExample2(&arena);
-    printf("OK\n");
+    //printf("testExample2()...");
+    //testExample2(&arena);
+    //printf("OK\n");
 
     char* input = readEntireFile(&arena, "input.txt");
     if (input)
     {
         ParseResult parseResult = parseInput(&arena, input);
-        printf("doPart1()...");
-        printf("OK\n");
-        doPart1(&arena, &parseResult);
+        //printf("doPart1()...");
+        //printf("OK\n");
+        //doPart1(&arena, &parseResult);
         printf("doPart2()...");
         doPart2(&arena, &parseResult);
         printf("OK\n");
