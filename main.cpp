@@ -793,8 +793,24 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     while (result < 0)
     {
         printf("\n");
+        printf("%zu| Top of heap", topsRemovedCount);
 
-        printf("%d| Top of heap:\n", topsRemovedCount);
+        if (heap.count > 0)
+        {
+            int equalToTopPrefixCount = 0;
+            for (int i = 0; i < heap.count; ++i)
+            {
+                if (heap.nodes[i].matchedPrefixLength == heap.nodes[0].matchedPrefixLength)
+                {
+                    ++equalToTopPrefixCount;
+                }
+            }
+            printf(" (%d nodes with %d prefix)\n", equalToTopPrefixCount, heap.nodes[0].matchedPrefixLength);
+        }
+        else
+        {
+            printf("\n");
+        }
 
         int N = 10;
         if (heap.count < N)
