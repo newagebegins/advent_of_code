@@ -856,26 +856,6 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         }
         printf("\n");
 
-        constexpr int equalToTopPrefixCountLimit = 30;
-        if (equalToTopPrefixCount > equalToTopPrefixCountLimit)
-        {
-            printf("Too many equal prefix nodes! Purge!\n");
-            bool found = true;
-            while (found)
-            {
-                found = false;
-                for (int i = 0; i < heap.count; ++i)
-                {
-                    if (heap.nodes[i].matchedPrefixLength == topMatchedPrefixLength)
-                    {
-                        found = true;
-                        deleteAt(&heap, i);
-                    }
-                }
-            }
-            continue;
-        }
-
         HeapNode top = removeTop(&heap);
         int topMoleculeLen = getStringLength(top.molecule);
         ASSERT(topMoleculeLen <= goalLen);
