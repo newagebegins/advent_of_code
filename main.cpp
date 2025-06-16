@@ -793,7 +793,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     while (result < 0)
     {
         printf("\n");
-        printf("%zu| Top of heap", topsRemovedCount);
+        printf("%zu| Top of heap (%d nodes", topsRemovedCount, heap.count);
 
         if (heap.count > 0)
         {
@@ -805,11 +805,11 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                     ++equalToTopPrefixCount;
                 }
             }
-            printf(" (%d nodes with %d prefix)\n", equalToTopPrefixCount, heap.nodes[0].matchedPrefixLength);
+            printf(", %d of them with %d prefix)\n", equalToTopPrefixCount, heap.nodes[0].matchedPrefixLength);
         }
         else
         {
-            printf("\n");
+            printf(")\n");
         }
 
         int N = 10;
@@ -931,12 +931,12 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                         }
                         else
                         {
-                            printf("len > goalLen, skip\n");
+                            printf("len (%d) > goalLen (%d), skip\n", newMoleculeLen, goalLen);
                         }
                     }
                     else
                     {
-                        printf("can't reach, skip\n");
+                        printf("can't reach %s from %s, skip\n", decodeAtom(goal[top.matchedPrefixLength], atomNames), decodeAtom(replacement->molecule[0], atomNames));
                     }
                 }
             }
