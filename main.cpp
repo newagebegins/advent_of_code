@@ -233,6 +233,25 @@ static bool isGreater(HeapNode* a, HeapNode* b)
     return a->matchedPrefixLength > b->matchedPrefixLength;
 }
 
+static void bubbleUp(Heap* heap, int index)
+{
+    while (index > 0)
+    {
+        int parentIndex = (index - 1) / 2;
+        if (isGreater(&heap->nodes[index], &heap->nodes[parentIndex]))
+        {
+            HeapNode tmp = heap->nodes[parentIndex];
+            heap->nodes[parentIndex] = heap->nodes[index];
+            heap->nodes[index] = tmp;
+            index = parentIndex;
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
 static void insert(Heap* heap, char* molecule, int matchedPrefixLength, int steps)
 {
     int newIndex = heap->count;
@@ -244,16 +263,37 @@ static void insert(Heap* heap, char* molecule, int matchedPrefixLength, int step
     heap->nodes[newIndex].matchedPrefixLength = matchedPrefixLength;
     heap->nodes[newIndex].steps = steps;
 
-    // Bubble up
-    while (newIndex > 0)
+    bubbleUp(heap, newIndex);
+}
+
+static void bubbleDown(Heap* heap, int index)
+{
+    while (true)
     {
-        int parentIndex = (newIndex - 1) / 2;
-        if (isGreater(&heap->nodes[newIndex], &heap->nodes[parentIndex]))
+        int leftChildIndex = index * 2 + 1;
+        if (leftChildIndex < heap->count)
         {
-            HeapNode tmp = heap->nodes[parentIndex];
-            heap->nodes[parentIndex] = heap->nodes[newIndex];
-            heap->nodes[newIndex] = tmp;
-            newIndex = parentIndex;
+            int greaterChildIndex;
+            int rightChildIndex = index * 2 + 2;
+            if (rightChildIndex < heap->count)
+            {
+                greaterChildIndex = isGreater(&heap->nodes[leftChildIndex], &heap->nodes[rightChildIndex]) ? leftChildIndex : rightChildIndex;
+            }
+            else
+            {
+                greaterChildIndex = leftChildIndex;
+            }
+            if (isGreater(&heap->nodes[greaterChildIndex], &heap->nodes[index]))
+            {
+                HeapNode tmp = heap->nodes[index];
+                heap->nodes[index] = heap->nodes[greaterChildIndex];
+                heap->nodes[greaterChildIndex] = tmp;
+                index = greaterChildIndex;
+            }
+            else
+            {
+                break;
+            }
         }
         else
         {
@@ -272,41 +312,31 @@ static HeapNode removeTop(Heap* heap)
         int newIndex = 0;
         heap->nodes[newIndex] = heap->nodes[heap->count];
 
-        // Bubble-down
-        while (true)
-        {
-            int leftChildIndex = newIndex * 2 + 1;
-            if (leftChildIndex < heap->count)
-            {
-                int greaterChildIndex;
-                int rightChildIndex = newIndex * 2 + 2;
-                if (rightChildIndex < heap->count)
-                {
-                    greaterChildIndex = isGreater(&heap->nodes[leftChildIndex], &heap->nodes[rightChildIndex]) ? leftChildIndex : rightChildIndex;
-                }
-                else
-                {
-                    greaterChildIndex = leftChildIndex;
-                }
-                if (isGreater(&heap->nodes[greaterChildIndex], &heap->nodes[newIndex]))
-                {
-                    HeapNode tmp = heap->nodes[newIndex];
-                    heap->nodes[newIndex] = heap->nodes[greaterChildIndex];
-                    heap->nodes[greaterChildIndex] = tmp;
-                    newIndex = greaterChildIndex;
-                }
-                else
-                {
-                    break;
-                }
-            }
-            else
-            {
-                break;
-            }
-        }
+        bubbleDown(heap, newIndex);
     }
     return result;
+}
+
+static void deleteAt(Heap* heap, int index)
+{
+    heap->nodes[index] = heap->nodes[heap->count - 1];
+    --heap->count;
+    if (index > 0)
+    {
+        int parentIndex = (index - 1) / 2;
+        if (isGreater(&heap->nodes[index], &heap->nodes[parentIndex]))
+        {
+            bubbleUp(heap, index);
+        }
+        else
+        {
+            bubbleDown(heap, index);
+        }
+    }
+    else
+    {
+        bubbleDown(heap, index);
+    }
 }
 
 static int getStringLength(const char* str)
@@ -794,17 +824,19 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         printf("\n");
         printf("%zu| Top of heap (%d nodes", topsRemovedCount, heap.count);
 
+        int equalToTopPrefixCount = 0;
+        int topMatchedPrefixLength = 0;
         if (heap.count > 0)
         {
-            int equalToTopPrefixCount = 0;
+            topMatchedPrefixLength = heap.nodes[0].matchedPrefixLength;
             for (int i = 0; i < heap.count; ++i)
             {
-                if (heap.nodes[i].matchedPrefixLength == heap.nodes[0].matchedPrefixLength)
+                if (heap.nodes[i].matchedPrefixLength == topMatchedPrefixLength)
                 {
                     ++equalToTopPrefixCount;
                 }
             }
-            printf(", %d of them with %d prefix)\n", equalToTopPrefixCount, heap.nodes[0].matchedPrefixLength);
+            printf(", %d of them with %d prefix)\n", equalToTopPrefixCount, topMatchedPrefixLength);
         }
         else
         {
@@ -816,7 +848,6 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         {
             N = heap.count;
         }
-        char decodedMolecule[1024];
         for (int index = 0; index < N; ++index)
         {
             HeapNode* node = &heap.nodes[index];
@@ -825,8 +856,29 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         }
         printf("\n");
 
+        constexpr int equalToTopPrefixCountLimit = 30;
+        if (equalToTopPrefixCount > equalToTopPrefixCountLimit)
+        {
+            printf("Too many equal prefix nodes! Purge!\n");
+            bool found = true;
+            while (found)
+            {
+                found = false;
+                for (int i = 0; i < heap.count; ++i)
+                {
+                    if (heap.nodes[i].matchedPrefixLength == topMatchedPrefixLength)
+                    {
+                        found = true;
+                        deleteAt(&heap, i);
+                    }
+                }
+            }
+            continue;
+        }
+
         HeapNode top = removeTop(&heap);
         int topMoleculeLen = getStringLength(top.molecule);
+        ASSERT(topMoleculeLen <= goalLen);
 
         int prefixLenToSkip = top.matchedPrefixLength;
         if (*(top.molecule + prefixLenToSkip) == 0 || *(goal + prefixLenToSkip) == 0)
@@ -835,25 +887,19 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         }
 
         ++topsRemovedCount;
-        if (topsRemovedCount % 1 == 0)
-        {
-            time_t now = time(NULL);
 
-            //printf("Seconds: %jd\n", now - startTime);
-            //printf("Tops removed: %zu\n", topsRemovedCount);
-            //printf("Top matched prefix length: %d\n", top.matchedPrefixLength);
-            //printf("Top steps: %d\n", top.steps);
-            //printf("Top / goal len: %d / %d\n", topMoleculeLen, goalLen);
-            //printf("Arena used: %zu / %zu (%f)\n", arena->used, arena->size, (float)arena->used / arena->size);
-            //printf("String set used: %zu / %zu (%f)\n", stringSet.count, stringSet.capacity, (float)stringSet.count / stringSet.capacity);
-            //printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
-            
-            decodeMolecule(top.molecule + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
-            printf("%s\n", decodedMolecule);
+        time_t now = time(NULL);
 
-            decodeMolecule(goal + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
-            printf("%s\n", decodedMolecule);
-        }
+        printf("Seconds: %jd\n", now - startTime);
+        printf("Arena used: %zu / %zu (%f)\n", arena->used, arena->size, (float)arena->used / arena->size);
+        printf("String set used: %zu / %zu (%f)\n", stringSet.count, stringSet.capacity, (float)stringSet.count / stringSet.capacity);
+        printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
+
+        decodeMolecule(top.molecule + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+        printf("%s\n", decodedMolecule);
+
+        decodeMolecule(goal + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+        printf("%s\n", decodedMolecule);
 
         if (top.matchedPrefixLength == goalLen)
         {
@@ -941,7 +987,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
             }
         }
 
-        getc(stdin);
+        //getc(stdin);
     }
 
     arena->used = savedArenaUsed;
