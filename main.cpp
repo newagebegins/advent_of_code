@@ -821,7 +821,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         {
             HeapNode* node = &heap.nodes[index];
             decodeMolecule(node->molecule + node->matchedPrefixLength, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
-            printf("%d: %d|%d|%s\n", index, node->matchedPrefixLength, node->steps, decodedMolecule);
+            printf("%d: %d|%d|%d|%s\n", index, node->matchedPrefixLength, node->steps, getStringLength(node->molecule), decodedMolecule);
         }
         printf("\n");
 
@@ -919,7 +919,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
                                 ASSERT(newMatchedPrefixLength >= top.matchedPrefixLength);
 
                                 int newSteps = top.steps + 1;
-                                printf("|%d|%d\n", newMatchedPrefixLength, newSteps);
+                                printf("|%d|%d|%d\n", newMatchedPrefixLength, newSteps, newMoleculeLen);
                                 insert(&heap, newMolecule, newMatchedPrefixLength, newSteps);
                             }
                             else
