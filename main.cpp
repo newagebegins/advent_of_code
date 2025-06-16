@@ -788,7 +788,6 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
     size_t topsRemovedCount = 0;
     time_t startTime = time(NULL);
     char decodedMolecule[1024];
-    int prefixLenToSkip = 0;
 
     while (result < 0)
     {
@@ -821,7 +820,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         for (int index = 0; index < N; ++index)
         {
             HeapNode* node = &heap.nodes[index];
-            decodeMolecule(node->molecule + prefixLenToSkip, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            decodeMolecule(node->molecule + node->matchedPrefixLength, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
             printf("%d: %d|%d|%s\n", index, node->matchedPrefixLength, node->steps, decodedMolecule);
         }
         printf("\n");
@@ -829,7 +828,7 @@ static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* repl
         HeapNode top = removeTop(&heap);
         int topMoleculeLen = getStringLength(top.molecule);
 
-        prefixLenToSkip = top.matchedPrefixLength;
+        int prefixLenToSkip = top.matchedPrefixLength;
         if (*(top.molecule + prefixLenToSkip) == 0 || *(goal + prefixLenToSkip) == 0)
         {
             --prefixLenToSkip;
