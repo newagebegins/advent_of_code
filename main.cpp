@@ -766,12 +766,6 @@ static ReachabilityMatrix makeReachabilityMatrix(Arena* arena, ReplacementList* 
         result.data[byteIndex] = 0;
     }
 
-    // Atoms can reach themselves
-    for (int atom = 0; atom < result.dimSize; ++atom)
-    {
-        result.data[atom * result.dimSize + atom] = 1;
-    }
-
     for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
     {
         Replacement* replacement = &replacements->replacements[replacementIndex];
