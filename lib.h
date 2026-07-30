@@ -4,11 +4,9 @@
 #include <stdint.h>
 #include <float.h>
 
-/*
 #define global_variable static
 #define internal static
 #define local_persist static
-*/
 
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -197,6 +195,17 @@ ZeroSize(void *VoidPtr, memory_index Size)
     {
         *Ptr++ = 0;
     }
+}
+
+inline u32
+StringLength(char *Str)
+{
+    u32 Count = 0;
+    while(*Str++)
+    {
+        ++Count;
+    }
+    return(Count);
 }
 
 #endif

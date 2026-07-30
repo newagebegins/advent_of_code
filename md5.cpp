@@ -1,17 +1,23 @@
-#include <bit>
-#include <cassert>
-#include <cstdint>
-#include <limits>
-#include <iostream>
-#include <iomanip>
+union md5
+{
+    u32 Words[4];
+    u8 Bytes[16];
+};
+
+inline u32
+RotateLeft(u32 Val, u32 Shift)
+{
+    u32 Result = (Val << Shift) | (Val >> (32 - Shift));
+    return(Result);
+}
 
 // https://en.wikipedia.org/wiki/MD5#Pseudocode
-static MD5 getMD5(u8* message, u32 originalMessageLength, u32 maxMessageLength)
+internal md5
+MD5(memory_arena *Arena, u8 *OriginalMessage, u32 OriginalMessageLength)
 {
-    // All variables are unsigned 32 bit and wrap modulo 2^32 when calculating
+    temporary_memory TempMem = BeginTemporaryMemory(Arena);
 
-    // s specifies the per-round shift amounts
-    u32 s[64] =
+    u32 Shifts[64] =
     {
         7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,  7, 12, 17, 22,
         5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,  5,  9, 14, 20,
@@ -39,143 +45,107 @@ static MD5 getMD5(u8* message, u32 originalMessageLength, u32 maxMessageLength)
         0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391,
     };
 
-    // Initialize variables:
-    u32 a0 = 0x67452301;   // A
-    u32 b0 = 0xefcdab89;   // B
-    u32 c0 = 0x98badcfe;   // C
-    u32 d0 = 0x10325476;   // D
+    u32 A0 = 0x67452301;
+    u32 B0 = 0xefcdab89;
+    u32 C0 = 0x98badcfe;
+    u32 D0 = 0x10325476;
 
-    // Pre-processing: adding a single 1 bit
-    //append "1" bit to message
-     // Notice: the input bytes are considered as bit strings,
-     //  where the first bit is the most significant bit of the byte.
+    // NOTE(slava): Pre-processing of the message:
+    // 1) Add a single 1 bit.
+    // 2) Pad with zeroes until the length is congruent to 56 mod 64.
+    // 2) Append original length in bits mod 2^64.
 
-    // Pre-processing: padding with zeros
-    //append "0" bit until message length in bits ≡ 448 (mod 512)
+    u32 MessageLength = OriginalMessageLength;
 
-    // Notice: the two padding steps above are implemented in a simpler way
-      //  in implementations that only work with complete bytes: append 0x80
-      //  and pad with 0x00 bytes so that the message length in bytes ≡ 56 (mod 64).
+    ++MessageLength;
 
-    u32 messageLength = originalMessageLength;
-    message[messageLength++] = 0x80;
-    while ((messageLength % 64) != 56)
+    s32 PadZeroCount = 56 - (MessageLength % 64);
+    if(PadZeroCount < 0)
     {
-        message[messageLength++] = 0x00;
+        PadZeroCount += 64;
     }
+    MessageLength += PadZeroCount;
+    Assert(((MessageLength - 56) % 64) == 0);
 
-    // append original length in bits mod 2^64 to message
+    MessageLength += 8;
+
+    Assert((MessageLength % 64) == 0);
+
+    u8 *Message = PushArray(Arena, MessageLength, u8);
+    Copy(OriginalMessageLength, OriginalMessage, Message);
+    u32 At = OriginalMessageLength;
+    Message[At++] = 0x80;
+    for(s32 PadZeroIndex = 0;
+        PadZeroIndex < PadZeroCount;
+        ++PadZeroIndex)
     {
-        union Uint64
-        {
-            u64 u64;
-            u8 u8[8];
-        };
-
-        Uint64 len;
-        len.u64 = originalMessageLength * 8;
-        for (int i{ 0 }; i < ArrayCount(len.u8); ++i)
-        {
-            message[messageLength++] = len.u8[i];
-        }
+        Message[At++] = 0;
     }
+    Assert((At % 8) == 0);
+    *((u64 *)Message + (At / 8)) = 8*OriginalMessageLength;
 
-    Assert((messageLength % 64) == 0);
-    Assert(messageLength < maxMessageLength);
-
-    // Process the message in successive 512-bit chunks:
+    // NOTE(slava): Process the message in successive 512-bit chunks
+    u32 ChunkCount = (MessageLength / 64);
+    u32 *End = (u32 *)Message + ChunkCount*16;
+    for(u32 *M = (u32 *)Message; M != End; M += 16)
     {
-        struct Chunk
+        u32 A = A0;
+        u32 B = B0;
+        u32 C = C0;
+        u32 D = D0;
+        for(u32 I = 0; I < 64; ++I)
         {
-            u32 words[16];
-        };
-        u32 chunksCount = (messageLength / sizeof(Chunk));
-        Assert(chunksCount * sizeof(Chunk) == messageLength);
-        Chunk* chunks = (Chunk *)message;
-        //for each 512-bit chunk of padded message do
-        for (u32 chunkIndex = 0; chunkIndex < chunksCount; ++chunkIndex)
-        {
-            // break chunk into sixteen 32-bit words M[j], 0 ≤ j ≤ 15
-            u32* M = &chunks[chunkIndex].words[0];
-            // Initialize hash value for this chunk:
-            u32 A = a0;
-            u32 B = b0;
-            u32 C = c0;
-            u32 D = d0;
-            // Main loop:
-            for (u32 i = 0; i < 64; ++i)
+            u32 F;
+            u32 G;
+            if(I < 16)
             {
-                u32 F;
-                u32 g;
-                if (i < 16)
-                {
-                    F = (B & C) | ((~B) & D);
-                    g = i;
-                }
-                else if (i < 32)
-                {
-                    F = (D & B) | ((~D) & C);
-                    g = (5*i + 1) % 16;
-                }
-                else if (i < 48)
-                {
-                    F = B ^ C ^ D;
-                    g = (3*i + 5) % 16;
-                }
-                else
-                {
-                    F = C ^ (B | (~D));
-                    g = (7*i) % 16;
-                }
-                // Be wary of the below definitions of a,b,c,d
-                F += A + K[i] + M[g];  // M[g] must be a 32-bit block
-                A = D;
-                D = C;
-                C = B;
-                u32 rotatedF = std::rotl(F, static_cast<int>(s[i]));
-                B += rotatedF;
+                F = (B & C) | ((~B) & D);
+                G = I;
             }
-            // Add this chunk's hash to result so far:
-            a0 += A;
-            b0 += B;
-            c0 += C;
-            d0 += D;
+            else if(I < 32)
+            {
+                F = (D & B) | ((~D) & C);
+                G = (5*I + 1) % 16;
+            }
+            else if(I < 48)
+            {
+                F = B ^ C ^ D;
+                G = (3*I + 5) % 16;
+            }
+            else
+            {
+                F = C ^ (B | (~D));
+                G = (7*I) % 16;
+            }
+            F += A + K[I] + M[G];
+            A = D;
+            D = C;
+            C = B;
+            B += RotateLeft(F, Shifts[I]);
         }
+
+        A0 += A;
+        B0 += B;
+        C0 += C;
+        D0 += D;
     }
 
-    //var char digest[16] := a0 append b0 append c0 append d0 // (Output is in little-endian)
-    return { a0, b0, c0, d0 };
+    EndTemporaryMemory(TempMem);
+
+    md5 Result = { A0, B0, C0, D0 };
+
+    return(Result);
 }
 
-static int copyString(const char* input, char* output, int maxLength)
-{
-    int length{ 0 };
-    for (; input[length]; ++length)
-    {
-        output[length] = input[length];
-    }
-    assert(length < maxLength);
-    return length;
-}
-
-static void printMD5(MD5 md5)
-{
-    for (int i{ 0 }; i < std::size(md5.bytes); ++i)
-    {
-        std::cout << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(md5.bytes[i]);
-    }
-    std::cout << '\n';
-}
-
-static b32
-Equal(MD5 A, MD5 B)
+internal b32
+Equal(md5 A, md5 B)
 {
     b32 Result = true;
     for(u32 WordIndex = 0;
-        WordIndex < ArrayCount(A.words);
+        WordIndex < ArrayCount(A.Words);
         ++WordIndex)
     {
-        if(A.words[WordIndex] != B.words[WordIndex])
+        if(A.Words[WordIndex] != B.Words[WordIndex])
         {
             Result = false;
             break;
@@ -191,12 +161,12 @@ CharToDigit(char C)
     return(Result);
 }
 
-static MD5
+internal md5
 ToMD5(const char *Str)
 {
-    MD5 Result;
+    md5 Result = {};
     for(u32 ByteIndex = 0;
-        ByteIndex < ArrayCount(Result.bytes);
+        ByteIndex < ArrayCount(Result.Bytes);
         ++ByteIndex)
     {
         char C1 = Str[2*ByteIndex];
@@ -204,21 +174,15 @@ ToMD5(const char *Str)
         u8 B1 = CharToDigit(C1);
         u8 B2 = CharToDigit(C2);
         u8 Byte = (B1 << 4) | B2;
-        Result.bytes[ByteIndex] = Byte;
+        Result.Bytes[ByteIndex] = Byte;
     }
     return(Result);
 }
 
-static void
-TestMD5()
+internal void
+TestMD5(memory_arena *Arena)
 {
-    constexpr int maxMessageLength{ 1024 };
-    char message[maxMessageLength];
-
-    MD5 result;
-    int messageLength;
-
-    const char* testStrings[]
+    char *TestStrings[] =
     {
         "",
         "a",
@@ -227,8 +191,9 @@ TestMD5()
         "The quick brown fox jumps over the lazy dog.",
         "abcdef609043",
         "pqrstuv1048970",
+        "012345678901234567890123456789012345678901234567890123456789",
     };
-    const char* encodedStrings[] =
+    char *EncodedStrings[] =
     {
         "d41d8cd98f00b204e9800998ecf8427e",
         "0cc175b9c0f1b6a831c399e269772661",
@@ -237,17 +202,15 @@ TestMD5()
         "e4d909c290d0fb1ca068ffaddf22cbd0",
         "000001dbbfa3a5c83a2d506429c7b00e",
         "000006136ef2ff3b291c85725f17325c",
+        "1ced811af47ead374872fcca9d73dd71",
     };
-    for (u32 StringIndex = 0;
-         StringIndex < ArrayCount(testStrings);
+    Assert(ArrayCount(TestStrings) == ArrayCount(EncodedStrings));
+    for(u32 StringIndex = 0;
+         StringIndex < ArrayCount(TestStrings);
          ++StringIndex)
     {
-        const char *str = testStrings[StringIndex];
-        std::cout << "MD5(\"" << str << "\"):\n";
-        messageLength = copyString(str, message, maxMessageLength);
-        result = getMD5(reinterpret_cast<std::uint8_t*>(message), static_cast<u32>(messageLength), maxMessageLength);
-        printMD5(result);
-        Assert(Equal(result, ToMD5(encodedStrings[StringIndex])));
+        char *Str = TestStrings[StringIndex];
+        md5 Hash = MD5(Arena, (u8 *)Str, StringLength(Str));
+        Assert(Equal(Hash, ToMD5(EncodedStrings[StringIndex])));
     }
 }
-
