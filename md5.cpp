@@ -154,13 +154,6 @@ Equal(md5 A, md5 B)
     return(Result);
 }
 
-inline u8
-CharToDigit(char C)
-{
-    u8 Result = (C > '9') ? ((C - 'a') + 0xA) : (C - '0');
-    return(Result);
-}
-
 internal md5
 ToMD5(const char *Str)
 {
@@ -171,8 +164,8 @@ ToMD5(const char *Str)
     {
         char C1 = Str[2*ByteIndex];
         char C2 = Str[2*ByteIndex + 1];
-        u8 B1 = CharToDigit(C1);
-        u8 B2 = CharToDigit(C2);
+        u8 B1 = CharToHexDigit(C1);
+        u8 B2 = CharToHexDigit(C2);
         u8 Byte = (B1 << 4) | B2;
         Result.Bytes[ByteIndex] = Byte;
     }

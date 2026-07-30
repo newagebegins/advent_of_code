@@ -99,6 +99,13 @@ GetRemainingSize(memory_arena *Arena, memory_index Alignment = 4)
     return(Result);
 }
 
+inline u8 *
+GetWatermark(memory_arena *Arena)
+{
+    u8 *Result = Arena->Base + Arena->Used;
+    return(Result);
+}
+
 inline temporary_memory
 BeginTemporaryMemory(memory_arena *Arena)
 {
@@ -206,6 +213,20 @@ StringLength(char *Str)
         ++Count;
     }
     return(Count);
+}
+
+inline u8
+CharToHexDigit(char C)
+{
+    u8 Result = (C > '9') ? ((C - 'a') + 0xa) : (C - '0');
+    return(Result);
+}
+
+inline char
+HexDigitToChar(u8 D)
+{
+    char Result = (D > 0x9) ? ('a' + (D - 0xa)) : ('0' + D);
+    return(Result);
 }
 
 #endif
