@@ -3,11 +3,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-#define MAX_BIT_COUNT 300
+global_variable memory_arena GlobalArena_;
+global_variable memory_arena *GlobalArena = &GlobalArena_;
 
 struct bit_string
 {
-    char Bits[MAX_BIT_COUNT + 1];
+    char *Bits;
     u32 BitCount;
 };
 
@@ -15,15 +16,15 @@ internal bit_string
 ToBitString(char *Bits)
 {
     bit_string Result;
-    char *Source = Bits;
-    char *Dest = Result.Bits;
-    while(*Source)
+    Result.BitCount = StringLength(Bits);
+    u32 DataSize = Result.BitCount + 1;
+    Result.Bits = PushArray(GlobalArena, DataSize, char);
+    for(u32 Index = 0;
+        Index < DataSize;
+        ++Index)
     {
-        *Dest++ = *Source++;
+        Result.Bits[Index] = Bits[Index];
     }
-    *Dest = 0;
-    Result.BitCount = (u32)(Source - Bits);
-    Assert(Result.BitCount <= MAX_BIT_COUNT);
     return(Result);
 }
 
@@ -31,6 +32,8 @@ internal bit_string
 DragonCurve(bit_string Input)
 {
     bit_string Result;
+    Result.BitCount = 2*Input.BitCount + 1;
+    Result.Bits = PushArray(GlobalArena, Result.BitCount + 1, char);
     char *Dest = Result.Bits;
     char *Source = Input.Bits;
     for(u32 BitIndex = 0;
@@ -50,33 +53,37 @@ DragonCurve(bit_string Input)
         *Dest++ = NewBit;
     }
     *Dest = 0;
-    Result.BitCount = (u32)(Dest - Result.Bits);
+    return(Result);
+}
+
+internal bit_string
+FindChecksumInternal(bit_string Input)
+{
+    Assert((Input.BitCount % 2) == 0);
+    bit_string Result;
+    Result.BitCount = Input.BitCount / 2;
+    Result.Bits = PushArray(GlobalArena, Result.BitCount + 1, char);
+    char *Dest = Result.Bits;
+    for(u32 BitIndex = 0;
+        BitIndex < Input.BitCount;
+        BitIndex += 2)
+    {
+        char C1 = Input.Bits[BitIndex];
+        char C2 = Input.Bits[BitIndex + 1];
+        *Dest++ = ((C1 == C2) ? '1' : '0');
+    }
+    *Dest = 0;
     return(Result);
 }
 
 internal bit_string
 FindChecksum(bit_string Input)
 {
-    Assert((Input.BitCount % 2) == 0);
-    bit_string Result = {};
-    char *Source = Input.Bits;
-    u32 SourceBitCount = Input.BitCount;
-    while((Result.BitCount % 2) == 0)
+    bit_string Result = Input;
+    do
     {
-        char *Dest = Result.Bits;
-        for(u32 BitIndex = 0;
-            BitIndex < SourceBitCount;
-            BitIndex += 2)
-        {
-            char C1 = Source[BitIndex];
-            char C2 = Source[BitIndex + 1];
-            *Dest++ = ((C1 == C2) ? '1' : '0');
-        }
-        *Dest = 0;
-        Result.BitCount = (u32)(Dest - Result.Bits);
-        Source = Result.Bits;
-        SourceBitCount = Result.BitCount;
-    }
+        Result = FindChecksumInternal(Result);
+    } while((Result.BitCount % 2) == 0);
     return(Result);
 }
 
@@ -89,6 +96,7 @@ FillDisk(u32 DiskLength, bit_string Input)
         Result = DragonCurve(Result);
     }
     Result.BitCount = DiskLength;
+    Result.Bits[Result.BitCount] = 0;
     return(Result);
 }
 
@@ -144,9 +152,23 @@ FillDiskTestCase(u32 DiskLength, char *InitBits, char *ExpectedDiskBits)
     Assert(BitStringsAreEqual(Disk, ExpectedDisk));
 }
 
+internal bit_string
+FillDiskAndFindChecksum(u32 DiskLength, char *InitBits)
+{
+    bit_string Init = ToBitString(InitBits);
+    bit_string Disk = FillDisk(DiskLength, Init);
+    bit_string Checksum = FindChecksum(Disk);
+    return(Checksum);
+}
+
 int
 main(void)
 {
+    memory_index ArenaSize = Megabytes(512);
+    void *ArenaBase = malloc(ArenaSize);
+    Assert(ArenaBase);
+    InitializeArena(GlobalArena, ArenaSize, ArenaBase);
+
     DragonCurveTestCase("1", "100");
     DragonCurveTestCase("0", "001");
     DragonCurveTestCase("11111", "11111000000");
@@ -157,10 +179,13 @@ main(void)
 
     FillDiskTestCase(20, "10000", "10000011110010000111");
 
-    bit_string Init = ToBitString("10011111011011001");
-    bit_string Disk = FillDisk(272, Init);
-    bit_string Checksum = FindChecksum(Disk);
-    printf("%s\n", Checksum.Bits);
+    char *InputBits = "10011111011011001";
+
+    bit_string Checksum1 = FillDiskAndFindChecksum(272, InputBits);
+    Assert(BitStringsAreEqual(Checksum1, ToBitString("10111110010110110")));
+
+    bit_string Checksum2 = FillDiskAndFindChecksum(35651584, InputBits);
+    Assert(BitStringsAreEqual(Checksum2, ToBitString("01101100001100100")));
 
     return(0);
 }
