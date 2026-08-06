@@ -31,6 +31,13 @@ InitializeQueue(queue *Queue, memory_arena *Arena, u32 MaxCount)
     Queue->OnePastEndIndex = 0;
 }
 
+inline b32
+IsEmpty(queue *Queue)
+{
+    b32 Result = (Queue->Count == 0);
+    return(Result);
+}
+
 internal void
 Enqueue(queue *Queue, u32 X, u32 Y, char *Path, u32 PathLength)
 {
@@ -151,12 +158,96 @@ FindShortestPath(memory_arena *Arena, char *Passcode)
     return(Result);
 }
 
+internal u32
+FindLongestPathLength(memory_arena *Arena, char *Passcode)
+{
+    u32 Result = 0;
+
+    u32 PasscodeLength = StringLength(Passcode);
+
+    direction Directions[4] =
+    {
+        {'U', 0, -1},
+        {'D', 0, 1},
+        {'L', -1, 0},
+        {'R', 1, 0},
+    };
+
+    temporary_memory TempMem = BeginTemporaryMemory(Arena);
+
+    queue Queue;
+    InitializeQueue(&Queue, Arena, 512);
+    Enqueue(&Queue, 0, 0, "", 0);
+
+    node Node;
+
+    while(!IsEmpty(&Queue))
+    {
+        Node = Dequeue(&Queue);
+
+        if((Node.X == 3) && (Node.Y == 3))
+        {
+            if(Result < Node.PathLength)
+            {
+                Result = Node.PathLength;
+            }
+        }
+        else
+        {
+            u32 PasscodePlusPathLength = PasscodeLength + Node.PathLength;
+            char *PasscodePlusPath = PushArray(Arena, PasscodePlusPathLength + 1, char);
+            Copy(PasscodeLength, Passcode, PasscodePlusPath);
+            Copy(Node.PathLength + 1, Node.Path, PasscodePlusPath + PasscodeLength);
+
+            md5 Hash = MD5(Arena, (u8 *)PasscodePlusPath, PasscodePlusPathLength);
+
+            for(u32 NibbleIndex = 0;
+                NibbleIndex < 4;
+                ++NibbleIndex)
+            {
+                u8 Nibble = GetNibble(Hash, NibbleIndex);
+                if(Nibble > 0xa)
+                {
+                    direction Dir = Directions[NibbleIndex];
+
+                    s32 NewX = Node.X + Dir.dX;
+                    s32 NewY = Node.Y + Dir.dY;
+
+                    if((NewX >= 0) && (NewX <= 3) &&
+                       (NewY >= 0) && (NewY <= 3))
+                    {
+                        u32 NewPathLength = Node.PathLength + 1;
+                        char *NewPath = PushArray(Arena, NewPathLength + 1, char);
+                        Copy(Node.PathLength, Node.Path, NewPath);
+                        NewPath[NewPathLength - 1] = Dir.Char;
+                        NewPath[NewPathLength] = 0;
+                        Enqueue(&Queue, NewX, NewY, NewPath, NewPathLength);
+                    }
+                }
+            }
+        }
+    }
+
+    EndTemporaryMemory(TempMem);
+
+    return(Result);
+}
+
 inline void
 FindShortestPathTestCase(memory_arena *Arena, char *Passcode, char *ExpectedPath)
 {
     temporary_memory TempMem = BeginTemporaryMemory(Arena);
     char *Path = FindShortestPath(Arena, Passcode);
     Assert(StringsAreEqual(Path, ExpectedPath));
+    EndTemporaryMemory(TempMem);
+}
+
+inline void
+FindLongestPathLengthTestCase(memory_arena *Arena, char *Passcode, u32 ExpectedLength)
+{
+    temporary_memory TempMem = BeginTemporaryMemory(Arena);
+    u32 Length = FindLongestPathLength(Arena, Passcode);
+    Assert(Length == ExpectedLength);
     EndTemporaryMemory(TempMem);
 }
 
@@ -170,9 +261,27 @@ int main(void)
 
     FindShortestPathTestCase(&Arena, "ihgpwlah", "DDRRRD");
     FindShortestPathTestCase(&Arena, "kglvqrro", "DDUDRLRRUDRD");
+    FindShortestPathTestCase(&Arena, "ulqzkmiv", "DRURDRUDDLLDLUURRDULRLDUUDDDRR");
 
-    char *Path = FindShortestPath(&Arena, "njfxhljp");
-    printf("%s\n", Path);
+    FindLongestPathLengthTestCase(&Arena, "ihgpwlah", 370);
+    FindLongestPathLengthTestCase(&Arena, "kglvqrro", 492);
+    FindLongestPathLengthTestCase(&Arena, "ulqzkmiv", 830);
+
+    char *Passcode = "njfxhljp";
+
+    {
+        temporary_memory TempMem = BeginTemporaryMemory(&Arena);
+        char *Path = FindShortestPath(&Arena, Passcode);
+        Assert(StringsAreEqual(Path, "DURLDRRDRD"));
+        EndTemporaryMemory(TempMem);
+    }
+
+    {
+        temporary_memory TempMem = BeginTemporaryMemory(&Arena);
+        u32 Length = FindLongestPathLength(&Arena, Passcode);
+        Assert(Length == 650);
+        EndTemporaryMemory(TempMem);
+    }
 
     return(0);
 }
