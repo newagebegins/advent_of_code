@@ -89,27 +89,28 @@ struct row
 // 100 -> 100
 // 001 -> 001
 
-internal row
-StringToRow(char *Str)
+struct tile_indices
 {
-    row Result = {};
-    u32 TilesPerRow = StringLength(Str);
-    Result.TileCount = TilesPerRow;
+    u32 Rel;
+    u32 Chunk;
+};
 
-    u32 ChunkCount = 1 + ((TilesPerRow - 1) / EFFECTIVE_TILES_PER_CHUNK);
+inline tile_indices
+GetTileIndices(u32 AbsTileIndex)
+{
+    tile_indices Result;
+    Result.Rel = 1 + (AbsTileIndex % EFFECTIVE_TILES_PER_CHUNK);
+    Result.Chunk = AbsTileIndex / EFFECTIVE_TILES_PER_CHUNK;
+    return(Result);
+}
+
+inline row
+AddPadding(row Row)
+{
+    row Result = Row;
+
+    u32 ChunkCount = 1 + ((Row.TileCount - 1) / EFFECTIVE_TILES_PER_CHUNK);
     Assert(ChunkCount <= MAX_CHUNK_COUNT);
-
-    for(u32 AbsTileIndex = 0;
-        AbsTileIndex < TilesPerRow;
-        ++AbsTileIndex)
-    {
-        u32 RelTileIndex = 1 + (AbsTileIndex % EFFECTIVE_TILES_PER_CHUNK);
-        u32 ChunkIndex = AbsTileIndex / EFFECTIVE_TILES_PER_CHUNK;
-        if(Str[AbsTileIndex] == '^')
-        {
-            Result.Chunks[ChunkIndex] |= (1ULL << RelTileIndex);
-        }
-    }
 
     for(u32 ChunkIndex = 0;
         ChunkIndex < ChunkCount;
@@ -130,6 +131,63 @@ StringToRow(char *Str)
     return(Result);
 }
 
+internal row
+CalculateNewRow(row PrevRow)
+{
+    row Result = {};
+    Result.TileCount = PrevRow.TileCount;
+
+    for(u32 AbsTileIndex = 0;
+        AbsTileIndex < Result.TileCount;
+        ++AbsTileIndex)
+    {
+        tile_indices Indices = GetTileIndices(AbsTileIndex);
+        chunk PrevChunk = PrevRow.Chunks[Indices.Chunk];
+        chunk TilesToCheck = ((PrevChunk >> (Indices.Rel - 1)) & 7);
+        if((TilesToCheck == 1) ||
+           (TilesToCheck == 3) ||
+           (TilesToCheck == 4) ||
+           (TilesToCheck == 6))
+        {
+            Result.Chunks[Indices.Chunk] |= (1ULL << Indices.Rel);
+        }
+    }
+
+    Result = AddPadding(Result);
+
+    return(Result);
+}
+
+internal row
+StringToRow(char *Str)
+{
+    row Result = {};
+    Result.TileCount = StringLength(Str);
+
+    for(u32 AbsTileIndex = 0;
+        AbsTileIndex < Result.TileCount;
+        ++AbsTileIndex)
+    {
+        tile_indices Indices = GetTileIndices(AbsTileIndex);
+        if(Str[AbsTileIndex] == '^')
+        {
+            Result.Chunks[Indices.Chunk] |= (1ULL << Indices.Rel);
+        }
+    }
+
+    Result = AddPadding(Result);
+
+    return(Result);
+}
+
+inline b32
+IsTrap(row Row, u32 AbsTileIndex)
+{
+    tile_indices Indices = GetTileIndices(AbsTileIndex);
+    b32 Result = ((Row.Chunks[Indices.Chunk] >> Indices.Rel) & 1);
+    return(Result);
+}
+
 internal void
 RowToString(row Row, char *Dest, u32 DestSize)
 {
@@ -139,10 +197,7 @@ RowToString(row Row, char *Dest, u32 DestSize)
         AbsTileIndex < Row.TileCount;
         ++AbsTileIndex)
     {
-        u32 RelTileIndex = 1 + (AbsTileIndex % EFFECTIVE_TILES_PER_CHUNK);
-        u32 ChunkIndex = AbsTileIndex / EFFECTIVE_TILES_PER_CHUNK;
-        b32 IsTrap = ((Row.Chunks[ChunkIndex] >> RelTileIndex) & 1);
-        char Char = (IsTrap ? '^' : '.');
+        char Char = (IsTrap(Row, AbsTileIndex) ? '^' : '.');
         Dest[AbsTileIndex] = Char;
     }
 
@@ -157,86 +212,13 @@ CountSafeTilesInRow(row Row)
         AbsTileIndex < Row.TileCount;
         ++AbsTileIndex)
     {
-        u32 RelTileIndex = 1 + (AbsTileIndex % EFFECTIVE_TILES_PER_CHUNK);
-        u32 ChunkIndex = AbsTileIndex / EFFECTIVE_TILES_PER_CHUNK;
-        b32 IsTrap = ((Row.Chunks[ChunkIndex] >> RelTileIndex) & 1);
-        if(!IsTrap)
+        if(!IsTrap(Row, AbsTileIndex))
         {
             ++Result;
         }
     }
     return(Result);
 }
-
-internal row
-CalculateNewRow(row PrevRow)
-{
-    row Result = {};
-    Result.TileCount = PrevRow.TileCount;
-    u32 TilesPerRow = PrevRow.TileCount;
-
-    u32 ChunkCount = 1 + ((TilesPerRow - 1) / EFFECTIVE_TILES_PER_CHUNK);
-    Assert(ChunkCount <= MAX_CHUNK_COUNT);
-
-    for(u32 AbsTileIndex = 0;
-        AbsTileIndex < TilesPerRow;
-        ++AbsTileIndex)
-    {
-        u32 RelTileIndex = 1 + (AbsTileIndex % EFFECTIVE_TILES_PER_CHUNK);
-        u32 ChunkIndex = AbsTileIndex / EFFECTIVE_TILES_PER_CHUNK;
-        chunk PrevChunk = PrevRow.Chunks[ChunkIndex];
-        chunk TilesToCheck = ((PrevChunk >> (RelTileIndex - 1)) & 7);
-        if((TilesToCheck == 1) ||
-           (TilesToCheck == 3) ||
-           (TilesToCheck == 4) ||
-           (TilesToCheck == 6))
-        {
-            Result.Chunks[ChunkIndex] |= (1ULL << RelTileIndex);
-        }
-    }
-
-    for(u32 ChunkIndex = 0;
-        ChunkIndex < ChunkCount;
-        ++ChunkIndex)
-    {
-        if(ChunkIndex > 0)
-        {
-            chunk TileVal = ((Result.Chunks[ChunkIndex - 1] >> (BITS_PER_CHUNK - 2)) & 1);
-            Result.Chunks[ChunkIndex] |= TileVal;
-        }
-        if((ChunkIndex + 1) < ChunkCount)
-        {
-            chunk TileVal = ((Result.Chunks[ChunkIndex + 1] >> 1) & 1);            
-            Result.Chunks[ChunkIndex] |= (TileVal << (BITS_PER_CHUNK - 1));
-        }
-    }
-
-    return(Result);
-}
-
-#if 0
-internal void
-RowsTestCase(char *Rows)
-{
-    char Buffer[2][MAX_TILE_COUNT + 1];
-    char *At = Rows;
-    At = SkipWhitespace(At);
-
-    At += GetLine(At, Buffer[0], sizeof(Buffer[0]));
-    row FirstRow = StringToRow(Buffer[0]);
-    RowToString(FirstRow, Buffer[1], sizeof(Buffer[1]));
-    Assert(StringsAreEqual(Buffer[0], Buffer[1]));
-
-    At = SkipWhitespace(At);
-    while(*At)
-    {
-        At += GetLine(At, Buffer[0], sizeof(Buffer[0]));
-        row Row = CalculateNewRow(PrevRow);
-        RowToString(Row, Buffer[1], sizeof(Buffer[1]));        
-        Assert(StringsAreEqual(Buffer[0], Buffer[1]));
-    }
-}
-#endif
 
 internal void
 TestCase(char *FirstRow, u32 TotalRows)
