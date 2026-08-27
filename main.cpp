@@ -232,9 +232,12 @@ ExecuteProgram(computer_state *State, u32 InstructionCount, instruction *Instruc
             s32 DeltaInstructionIndex = 3;
             is_multiply_result IsMulRes = IsMultiply(State, InstructionCount, Instructions,
                                                      IsAddResult.SumR, IsAddResult.AddendR);
+            State->Registers[IsAddResult.AddendR] = 0;
+
             if(IsMulRes.IsMultiply)
             {
                 DeltaSum *= State->Registers[IsMulRes.MultiplierR];
+                State->Registers[IsMulRes.MultiplierR] = 0;
                 DeltaInstructionIndex = 5;
                 printf("Found Multiply\n");
             }
