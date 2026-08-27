@@ -92,71 +92,226 @@ Toggle(instruction *Instruction)
 }
 
 internal void
+PrintInstructionsAndState(computer_state *State, u32 InstructionCount, instruction *Instructions)
+{
+    for(u32 RegisterIndex = 0;
+        RegisterIndex < MAX_REGISTERS;
+        ++RegisterIndex)
+    {
+        printf("%c: %d\n", 'a' + RegisterIndex, State->Registers[RegisterIndex]);
+    }
+    printf("\n");
+    char *InstructionName[] = {"cpy", "inc", "dec", "jnz", "tgl"};
+    for(u32 InstructionIndex = 0;
+        InstructionIndex < InstructionCount;
+        ++InstructionIndex)
+    {
+        instruction *Instruction = Instructions + InstructionIndex;
+        if(InstructionIndex == State->InstructionIndex)
+        {
+            printf("> ");
+        }
+        else
+        {
+            printf("  ");
+        }
+        printf("%s", InstructionName[Instruction->Type]);
+        for(u32 ArgumentIndex = 0;
+            ArgumentIndex < ArrayCount(Instruction->Arguments);
+            ++ArgumentIndex)
+        {
+            argument Arg = Instruction->Arguments[ArgumentIndex];
+            switch(Arg.Type)
+            {
+                case Argument_Constant:
+                {
+                    printf(" %d", Arg.Value);
+                } break;
+
+                case Argument_Register:
+                {
+                    printf(" %c", 'a' + Arg.Value);
+                } break;
+            }
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
+
+struct is_add_result
+{
+    b32 IsAdd;
+    u32 SumR;
+    u32 AddendR;
+};
+
+internal is_add_result
+IsAdd(computer_state *State, u32 InstructionCount, instruction *Instructions)
+{
+    is_add_result Result = {};
+    if((State->InstructionIndex + 2) < InstructionCount)
+    {
+        instruction I0 = Instructions[State->InstructionIndex];
+        instruction I1 = Instructions[State->InstructionIndex + 1];
+        instruction I2 = Instructions[State->InstructionIndex + 2];
+
+        u32 SumR = MAX_REGISTERS;
+        u32 AddendR = MAX_REGISTERS;
+
+        if((I0.Type == Instruction_inc) && (I1.Type == Instruction_dec))
+        {
+            SumR = I0.Arguments[0].Value;
+            AddendR = I1.Arguments[0].Value;
+        }
+        else if((I1.Type == Instruction_inc) && (I0.Type == Instruction_dec))
+        {
+            SumR = I1.Arguments[0].Value;
+            AddendR = I0.Arguments[0].Value;
+        }
+
+        if((SumR < MAX_REGISTERS) &&
+           (AddendR < MAX_REGISTERS) &&
+           (SumR != AddendR) &&
+           (I2.Type == Instruction_jnz) &&
+           ((u32)I2.Arguments[0].Value == AddendR) &&
+           (I2.Arguments[1].Value == -2))
+        {
+            Result.IsAdd = true;
+            Result.SumR = SumR;
+            Result.AddendR = AddendR;
+        }
+    }
+    return(Result);
+}
+
+struct is_multiply_result
+{
+    b32 IsMultiply;
+    u32 MultiplierR;
+};
+
+internal is_multiply_result
+IsMultiply(computer_state *State, u32 InstructionCount, instruction *Instructions,
+           u32 SumR, u32 AddendR)
+{
+    is_multiply_result Result = {};
+    if((State->InstructionIndex + 4) < InstructionCount)
+    {
+        instruction I3 = Instructions[State->InstructionIndex + 3];
+        instruction I4 = Instructions[State->InstructionIndex + 4];
+        if((I3.Type == Instruction_dec) &&
+           (I4.Type == Instruction_jnz))
+        {
+            u32 MultiplierR = I3.Arguments[0].Value;
+            if((MultiplierR != SumR) &&
+               (MultiplierR != AddendR) &&
+               (I4.Arguments[0].Type == Argument_Register) &&
+               ((u32)I4.Arguments[0].Value == MultiplierR) &&
+               (I4.Arguments[1].Value == -5))
+            {
+                Result.IsMultiply = true;
+                Result.MultiplierR = MultiplierR;
+            }
+        }
+    }
+    return(Result);
+}
+
+internal void
 ExecuteProgram(computer_state *State, u32 InstructionCount, instruction *Instructions)
 {
     while(State->InstructionIndex < InstructionCount)
     {
-        b32 GoToNextInstruction = true;
-        instruction *Instruction = Instructions + State->InstructionIndex;
+        PrintInstructionsAndState(State, InstructionCount, Instructions);
 
-        switch(Instruction->Type)
+        is_add_result IsAddResult = IsAdd(State, InstructionCount, Instructions);
+        if(IsAddResult.IsAdd)
         {
-            case Instruction_cpy:
+            s32 DeltaSum = State->Registers[IsAddResult.AddendR];
+            s32 DeltaInstructionIndex = 3;
+            is_multiply_result IsMulRes = IsMultiply(State, InstructionCount, Instructions,
+                                                     IsAddResult.SumR, IsAddResult.AddendR);
+            if(IsMulRes.IsMultiply)
             {
-                if(Instruction->Arguments[1].Type == Argument_Register)
-                {
-                    s32 NewValue = GetValue(State, Instruction->Arguments[0]);
-                    SetRegister(State,
-                                Instruction->Arguments[1].Value,
-                                NewValue);
-                }
-            } break;
-
-            case Instruction_inc:
+                DeltaSum *= State->Registers[IsMulRes.MultiplierR];
+                DeltaInstructionIndex = 5;
+                printf("Found Multiply\n");
+            }
+            else
             {
-                Assert(Instruction->Arguments[0].Type == Argument_Register);
-                Assert(Instruction->Arguments[1].Type == Argument_None);
-                IncrementRegister(State, Instruction->Arguments[0].Value);
-            } break;
+                printf("Found Add\n");
+            }
 
-            case Instruction_dec:
-            {
-                Assert(Instruction->Arguments[0].Type == Argument_Register);
-                Assert(Instruction->Arguments[1].Type == Argument_None);
-                DecrementRegister(State, Instruction->Arguments[0].Value);
-            } break;
-
-            case Instruction_jnz:
-            {
-                s32 Condition = GetValue(State, Instruction->Arguments[0]);
-                if(Condition)
-                {
-                    s32 Offset = GetValue(State, Instruction->Arguments[1]);
-                    State->InstructionIndex += Offset;
-                    GoToNextInstruction = false;
-                }
-            } break;
-
-            case Instruction_tgl:
-            {
-                Assert(Instruction->Arguments[0].Type == Argument_Register);
-                Assert(Instruction->Arguments[1].Type == Argument_None);
-                s32 Offset = GetValue(State, Instruction->Arguments[0]);
-                u32 InstructionIndex = State->InstructionIndex + Offset;
-                if(InstructionIndex < InstructionCount)
-                {
-                    Toggle(Instructions + InstructionIndex);
-                }
-            } break;
-
-            InvalidDefaultCase;
+            State->Registers[IsAddResult.SumR] += DeltaSum;
+            State->InstructionIndex += DeltaInstructionIndex;
         }
-
-        if(GoToNextInstruction)
+        else
         {
-            ++State->InstructionIndex;
+            b32 GoToNextInstruction = true;
+            instruction *Instruction = Instructions + State->InstructionIndex;
+
+            switch(Instruction->Type)
+            {
+                case Instruction_cpy:
+                {
+                    if(Instruction->Arguments[1].Type == Argument_Register)
+                    {
+                        s32 NewValue = GetValue(State, Instruction->Arguments[0]);
+                        SetRegister(State,
+                                    Instruction->Arguments[1].Value,
+                                    NewValue);
+                    }
+                } break;
+
+                case Instruction_inc:
+                {
+                    Assert(Instruction->Arguments[0].Type == Argument_Register);
+                    Assert(Instruction->Arguments[1].Type == Argument_None);
+                    IncrementRegister(State, Instruction->Arguments[0].Value);
+                } break;
+
+                case Instruction_dec:
+                {
+                    Assert(Instruction->Arguments[0].Type == Argument_Register);
+                    Assert(Instruction->Arguments[1].Type == Argument_None);
+                    DecrementRegister(State, Instruction->Arguments[0].Value);
+                } break;
+
+                case Instruction_jnz:
+                {
+                    s32 Condition = GetValue(State, Instruction->Arguments[0]);
+                    if(Condition)
+                    {
+                        s32 Offset = GetValue(State, Instruction->Arguments[1]);
+                        State->InstructionIndex += Offset;
+                        GoToNextInstruction = false;
+                    }
+                } break;
+
+                case Instruction_tgl:
+                {
+                    Assert(Instruction->Arguments[0].Type == Argument_Register);
+                    Assert(Instruction->Arguments[1].Type == Argument_None);
+                    s32 Offset = GetValue(State, Instruction->Arguments[0]);
+                    u32 InstructionIndex = State->InstructionIndex + Offset;
+                    if(InstructionIndex < InstructionCount)
+                    {
+                        Toggle(Instructions + InstructionIndex);
+                    }
+                } break;
+
+                InvalidDefaultCase;
+            }
+
+            if(GoToNextInstruction)
+            {
+                ++State->InstructionIndex;
+            }
         }
     }
+
+    PrintInstructionsAndState(State, InstructionCount, Instructions);
 }
 
 struct parsed_input
@@ -442,6 +597,7 @@ int main(void)
     Assert(ArenaBase);
     InitializeArena(&Arena, ArenaSize, ArenaBase);
 
+#if 1
     Day12Tests(&Arena);
 
     {
@@ -458,6 +614,7 @@ dec a)";
         ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions);
         Assert(State.Registers[0] == 3);
     }
+#endif
 
     char *Input = R"(cpy a b
 dec b
@@ -486,6 +643,7 @@ jnz d -2
 inc c
 jnz c -5)";
 
+#if 1
     {
         parsed_input ParsedInput = ParseInput(&Arena, Input);
         computer_state State = {};
@@ -493,14 +651,15 @@ jnz c -5)";
         ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions);
         Assert(State.Registers[0] == 12480);
     }
+#endif
 
-#if 0
+#if 1
     {
         parsed_input ParsedInput = ParseInput(&Arena, Input);
         computer_state State = {};
         State.Registers[0] = 12;
         ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions);
-        printf("%d\n", State.Registers[0]);
+        Assert(State.Registers[0] == 479009040);
     }
 #endif
 
