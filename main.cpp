@@ -592,16 +592,9 @@ jnz c -5)";
     EndTemporaryMemory(TempMem);
 }
 
-int main(void)
+internal void
+Day23Tests(memory_arena *Arena)
 {
-    memory_arena Arena;
-    memory_index ArenaSize = Megabytes(1);
-    void *ArenaBase = malloc(ArenaSize);
-    Assert(ArenaBase);
-    InitializeArena(&Arena, ArenaSize, ArenaBase);
-
-#if 1
-    Day12Tests(&Arena);
 
     {
         char *Input = R"(cpy 2 a
@@ -612,12 +605,11 @@ cpy 1 a
 dec a
 dec a)";
 
-        parsed_input ParsedInput = ParseInput(&Arena, Input);
+        parsed_input ParsedInput = ParseInput(Arena, Input);
         computer_state State = {};
         ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions);
         Assert(State.Registers[0] == 3);
     }
-#endif
 
     char *Input = R"(cpy a b
 dec b
@@ -646,25 +638,33 @@ jnz d -2
 inc c
 jnz c -5)";
 
-#if 1
     {
-        parsed_input ParsedInput = ParseInput(&Arena, Input);
+        parsed_input ParsedInput = ParseInput(Arena, Input);
         computer_state State = {};
         State.Registers[0] = 7;
         ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions);
         Assert(State.Registers[0] == 12480);
     }
-#endif
 
-#if 1
     {
-        parsed_input ParsedInput = ParseInput(&Arena, Input);
+        parsed_input ParsedInput = ParseInput(Arena, Input);
         computer_state State = {};
         State.Registers[0] = 12;
         ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions);
         Assert(State.Registers[0] == 479009040);
     }
-#endif
+}
+
+int main(void)
+{
+    memory_arena Arena;
+    memory_index ArenaSize = Megabytes(1);
+    void *ArenaBase = malloc(ArenaSize);
+    Assert(ArenaBase);
+    InitializeArena(&Arena, ArenaSize, ArenaBase);
+
+    Day12Tests(&Arena);
+    Day23Tests(&Arena);
 
     return(0);
 }
