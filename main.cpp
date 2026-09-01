@@ -219,9 +219,10 @@ IsMultiply(computer_state *State, u32 InstructionCount, instruction *Instruction
 }
 
 internal void
-ExecuteProgram(computer_state *State, u32 InstructionCount, instruction *Instructions)
+ExecuteProgram(computer_state *State, u32 InstructionCount, instruction *Instructions, s32 *Out = 0)
 {
-    while(State->InstructionIndex < InstructionCount)
+    b32 Exit = false;
+    while((State->InstructionIndex < InstructionCount) && !Exit)
     {
         //PrintInstructionsAndState(State, InstructionCount, Instructions);
 
@@ -302,6 +303,13 @@ ExecuteProgram(computer_state *State, u32 InstructionCount, instruction *Instruc
                     {
                         Toggle(Instructions + InstructionIndex);
                     }
+                } break;
+
+                case Instruction_out:
+                {
+                    s32 Value = GetValue(State, Instruction->Arguments[0]);
+                    *Out = Value;
+                    Exit = true;
                 } break;
 
                 InvalidDefaultCase;
@@ -482,6 +490,7 @@ ParseInput(memory_arena *Arena, char *Input)
     str DecStr = Str("dec");
     str JnzStr = Str("jnz");
     str TglStr = Str("tgl");
+    str OutStr = Str("out");
 
     while(*Context.At)
     {
@@ -516,6 +525,11 @@ ParseInput(memory_arena *Arena, char *Input)
         else if(StringsAreEqual(Command, TglStr))
         {
             Inst->Type = Instruction_tgl;
+            ArgCount = 1;
+        }
+        else if(StringsAreEqual(Command, OutStr))
+        {
+            Inst->Type = Instruction_out;
             ArgCount = 1;
         }
         else
@@ -665,6 +679,65 @@ int main(void)
 
     Day12Tests(&Arena);
     Day23Tests(&Arena);
+
+    char *Input = R"(cpy a d
+cpy 11 c
+cpy 231 b
+inc d
+dec b
+jnz b -2
+dec c
+jnz c -5
+cpy d a
+jnz 0 0
+cpy a b
+cpy 0 a
+cpy 2 c
+jnz b 2
+jnz 1 6
+dec b
+dec c
+jnz c -4
+inc a
+jnz 1 -7
+cpy 2 b
+jnz c 2
+jnz 1 4
+dec b
+dec c
+jnz 1 -4
+jnz 0 0
+out b
+jnz a -19
+jnz 1 -21)";
+
+    s32 TestPattern[] = {0, 1, 0, 1, 0, 1, 0, 1, 0};
+    parsed_input ParsedInput = ParseInput(&Arena, Input);
+    for(s32 A = 1;
+        A <= INT_MAX;
+        ++A)
+    {
+        computer_state State = {};
+        State.Registers[0] = A;
+        b32 Matched = true;
+        for(u32 PatternIndex = 0;
+            PatternIndex < ArrayCount(TestPattern);
+            ++PatternIndex)
+        {
+            s32 Out = -1;
+            ExecuteProgram(&State, ParsedInput.InstructionCount, ParsedInput.Instructions, &Out);
+            if(Out != TestPattern[PatternIndex])
+            {
+                Matched = false;
+                break;
+            }
+        }
+        if(Matched)
+        {
+            printf("%d\n", A);
+            break;
+        }
+    }
 
     return(0);
 }

@@ -22,6 +22,7 @@ enum instruction_type
     Instruction_dec,
     Instruction_jnz,
     Instruction_tgl,
+    Instruction_out,
 };
 
 enum argument_type
