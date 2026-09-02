@@ -1,0 +1,1319 @@
+#include <windows.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <time.h>
+
+#define ASSERT(x) if(!(x)){*((int*)0) = 1;}
+#define ARRAY_COUNT(a) (sizeof(a)/sizeof((a)[0]))
+
+#define KILOBYTES(x) (1024LL*(x))
+#define MEGABYTES(x) (1024LL*KILOBYTES(x))
+#define GIGABYTES(x) (1024LL*MEGABYTES(x))
+
+//
+// Arena
+//
+
+struct Arena
+{
+    void* base;
+    size_t size;
+    size_t used;
+};
+
+static Arena makeArena(void* base, size_t size)
+{
+    Arena arena = {};
+    arena.base = base;
+    arena.size = size;
+    return arena;
+}
+
+static void* pushSize(Arena* arena, size_t size)
+{
+    void* result = (char*)arena->base + arena->used;
+    ASSERT(arena->used + size <= arena->size);
+    arena->used += size;
+    return result;
+}
+
+static Arena makeSubArena(Arena* arena, size_t size)
+{
+    Arena result = {};
+    result.size = size;
+    result.base = pushSize(arena, size);
+    return result;
+}
+
+#define pushType(arena, type) (type*) pushSize(arena, sizeof(type))
+#define pushArray(arena, type, count) (type*) pushSize(arena, (count) * sizeof(type))
+#define pushString(arena, length) pushArray(arena, char, (length) + 1)
+
+//
+//
+
+struct AtomNameSet
+{
+    const char** names;
+    int count;
+    int capacity;
+};
+
+struct Replacement
+{
+    char atom;
+    char* molecule;
+};
+
+struct ReplacementList
+{
+    Replacement* replacements;
+    int count;
+    int capacity;
+};
+
+struct ParseResult
+{
+    AtomNameSet atomNames;
+    ReplacementList replacements;
+    char* goal;
+};
+
+struct HeapNode
+{
+    char* molecule;
+    int matchedPrefixLength;
+    int matchedSuffixLength;
+    int matchedLength;
+    int steps; // The number of replacements made to the start molecule to get to the given molecule
+};
+
+struct Heap
+{
+    HeapNode* nodes;
+    int count;
+    int capacity;
+};
+
+//
+// Strings
+//
+
+static bool isUppercase(char c)
+{
+    return c >= 'A' && c <= 'Z';
+}
+
+static bool isLowercase(char c)
+{
+    return c >= 'a' && c <= 'z';
+}
+
+static bool stringsAreEqual(const char* a, const char* b)
+{
+    bool result;
+    while (true)
+    {
+        if (*a == *b)
+        {
+            if (*a)
+            {
+                ++a;
+                ++b;
+            }
+            else
+            {
+                result = true;
+                break;
+            }
+        }
+        else
+        {
+            result = false;
+            break;
+        }
+    }
+    return result;
+}
+
+//
+// String Set
+//
+
+struct StringSet
+{
+    char** strings;
+    size_t count;
+    size_t capacity;
+};
+
+static StringSet makeStringSet(Arena* arena, int capacity)
+{
+    StringSet set = {};
+    set.strings = pushArray(arena, char*, capacity);
+    for (int i = 0; i < capacity; ++i)
+    {
+        set.strings[i] = 0;
+    }
+    set.capacity = capacity;
+    return set;
+}
+
+static void clearStringSet(StringSet* set)
+{
+    set->count = 0;
+    for (int i = 0; i < set->capacity; ++i)
+    {
+        set->strings[i] = 0;
+    }
+}
+
+static long long computeStringHash(const char* s) {
+    const int p = 31;
+    const int m = (int)1e9 + 9;
+    long long result = 0;
+    long long pPow = 1;
+    while (*s)
+    {
+        result = (result + (*s) * pPow) % m;
+        pPow = (pPow * p) % m;
+        ++s;
+    }
+    return result;
+}
+
+static bool addStringToSet(StringSet* set, char* toAdd)
+{
+    ASSERT(set->count < set->capacity);
+    bool added;
+    long long hash = computeStringHash(toAdd);
+    size_t index = hash % set->capacity;
+    while (true)
+    {
+        ASSERT(index < set->capacity);
+        if (set->strings[index])
+        {
+            if (stringsAreEqual(set->strings[index], toAdd))
+            {
+                added = false;
+                break;
+            }
+            else
+            {
+                index = (index + 1) % set->capacity;
+            }
+        }
+        else
+        {
+            added = true;
+            ++set->count;
+            set->strings[index] = toAdd;
+            break;
+        }
+    }
+    return added;
+}
+
+//
+//
+//
+
+static Heap makeHeap(Arena* arena, int capacity)
+{
+    Heap result = {};
+    result.capacity = capacity;
+    result.nodes = pushArray(arena, HeapNode, capacity);
+    return result;
+}
+
+static bool isGreater_old(HeapNode* a, HeapNode* b)
+{
+    if (a->matchedLength == b->matchedLength)
+    {
+        return a->steps < b->steps;
+    }
+    return a->matchedLength > b->matchedLength;
+}
+
+static bool isGreater(HeapNode* a, HeapNode* b)
+{
+    if (a->steps == b->steps)
+    {
+        return a->matchedLength > b->matchedLength;
+    }
+    return a->steps < b->steps;
+}
+
+static void bubbleUp(Heap* heap, int index)
+{
+    while (index > 0)
+    {
+        int parentIndex = (index - 1) / 2;
+        if (isGreater(&heap->nodes[index], &heap->nodes[parentIndex]))
+        {
+            HeapNode tmp = heap->nodes[parentIndex];
+            heap->nodes[parentIndex] = heap->nodes[index];
+            heap->nodes[index] = tmp;
+            index = parentIndex;
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+static void insert(Heap* heap, char* molecule, int matchedPrefixLength, int matchedSuffixLength, int steps)
+{
+    int newIndex = heap->count;
+    ASSERT(newIndex < heap->capacity);
+
+    ++heap->count;
+
+    heap->nodes[newIndex].molecule = molecule;
+    heap->nodes[newIndex].matchedPrefixLength = matchedPrefixLength;
+    heap->nodes[newIndex].matchedSuffixLength = matchedSuffixLength;
+    heap->nodes[newIndex].matchedLength = matchedPrefixLength + matchedSuffixLength;
+    heap->nodes[newIndex].steps = steps;
+
+    bubbleUp(heap, newIndex);
+}
+
+static void bubbleDown(Heap* heap, int index)
+{
+    while (true)
+    {
+        int leftChildIndex = index * 2 + 1;
+        if (leftChildIndex < heap->count)
+        {
+            int greaterChildIndex;
+            int rightChildIndex = index * 2 + 2;
+            if (rightChildIndex < heap->count)
+            {
+                greaterChildIndex = isGreater(&heap->nodes[leftChildIndex], &heap->nodes[rightChildIndex]) ? leftChildIndex : rightChildIndex;
+            }
+            else
+            {
+                greaterChildIndex = leftChildIndex;
+            }
+            if (isGreater(&heap->nodes[greaterChildIndex], &heap->nodes[index]))
+            {
+                HeapNode tmp = heap->nodes[index];
+                heap->nodes[index] = heap->nodes[greaterChildIndex];
+                heap->nodes[greaterChildIndex] = tmp;
+                index = greaterChildIndex;
+            }
+            else
+            {
+                break;
+            }
+        }
+        else
+        {
+            break;
+        }
+    }
+}
+
+static HeapNode removeTop(Heap* heap)
+{
+    ASSERT(heap->count > 0);
+    HeapNode result = heap->nodes[0];
+    --heap->count;
+    if (heap->count > 0)
+    {
+        int newIndex = 0;
+        heap->nodes[newIndex] = heap->nodes[heap->count];
+
+        bubbleDown(heap, newIndex);
+    }
+    return result;
+}
+
+static void deleteAt(Heap* heap, int index)
+{
+    heap->nodes[index] = heap->nodes[heap->count - 1];
+    --heap->count;
+    if (index > 0)
+    {
+        int parentIndex = (index - 1) / 2;
+        if (isGreater(&heap->nodes[index], &heap->nodes[parentIndex]))
+        {
+            bubbleUp(heap, index);
+        }
+        else
+        {
+            bubbleDown(heap, index);
+        }
+    }
+    else
+    {
+        bubbleDown(heap, index);
+    }
+}
+
+static int getStringLength(const char* str)
+{
+    int result = 0;
+    while (*str)
+    {
+        ++result;
+        ++str;
+    }
+    return result;
+}
+
+static void intToString(int n, char* buf)
+{
+    ASSERT(n >= 0);
+    int digitsCount;
+    if (n == 0)
+    {
+        digitsCount = 1;
+    }
+    else
+    {
+        digitsCount = 0;
+        for (int i = n; i > 0; i /= 10)
+        {
+            ++digitsCount;
+        }
+    }
+
+    for (int index = digitsCount - 1; index >= 0; --index, n /= 10)
+    {
+        int digit = n % 10;
+        buf[index] = '0' + (char)digit;
+    }
+
+    buf[digitsCount] = 0;
+}
+
+static void printLine(const char* str)
+{
+    HANDLE stdoutHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (stdoutHandle != NULL && stdoutHandle != INVALID_HANDLE_VALUE)
+    {
+        WriteConsoleA(stdoutHandle, str, getStringLength(str), NULL, NULL);
+        WriteConsoleA(stdoutHandle, "\n", 1, NULL, NULL);
+    }
+}
+
+static int getReplacementsCount(char* input)
+{
+    int result = 0;
+    while (true)
+    {
+        if (*input == '\n')
+        {
+            ++result;
+            ++input;
+            if (*input == '\n')
+            {
+                break;
+            }
+        }
+        else
+        {
+            ++input;
+        }
+    }
+    return result;
+}
+
+static bool isWhitespace(char c)
+{
+    bool result;
+    switch (c)
+    {
+    case ' ':
+    case '\n':
+    case '\t':
+        result = true;
+        break;
+    default:
+        result = false;
+        break;
+    }
+    return result;
+}
+
+static void skipWhitespace(char** input)
+{
+    while (isWhitespace(**input))
+    {
+        ++(*input);
+    }
+}
+
+static void skipString(char** input, const char* str)
+{
+    skipWhitespace(input);
+    while (*str)
+    {
+        if (**input == *str)
+        {
+            ++(*input);
+            ++str;
+        }
+        else
+        {
+            ASSERT(0);
+        }
+    }
+}
+
+static int getWordLength(char* input)
+{
+    int result = 0;
+    while (!isWhitespace(*input))
+    {
+        ++result;
+        ++input;
+    }
+    return result;
+}
+
+static char* extractWord(Arena* arena, char** input)
+{
+    skipWhitespace(input);
+    int wordLength = getWordLength(*input);
+    char* result = pushString(arena, wordLength);
+    for (int letterIndex = 0; letterIndex < wordLength; ++letterIndex, ++(*input))
+    {
+        result[letterIndex] = **input;
+    }
+    result[wordLength] = 0;
+    return result;
+}
+
+static int getRawAtomLength(const char* str)
+{
+    int length = 0;
+    if (*str == 'e')
+    {
+        length = 1;
+    }
+    else
+    {
+        if (isUppercase(*str))
+        {
+            ++length;
+            ++str;
+            while (isLowercase(*str))
+            {
+                ++length;
+                ++str;
+            }
+        }
+    }
+    return length;
+}
+
+static char* extractRawAtom(Arena* arena, const char** input)
+{
+    int length = getRawAtomLength(*input);
+    ASSERT(length > 0);
+    char* rawAtom = pushString(arena, length);
+    for (int letterIndex = 0; letterIndex < length; ++letterIndex)
+    {
+        rawAtom[letterIndex] = **input;
+        ++(*input);
+    }
+    rawAtom[length] = 0;
+    return rawAtom;
+}
+
+static char encodeAtom(AtomNameSet* atomNames, const char* rawAtom)
+{
+    int index = -1;
+    for (int atomIndex = 0; atomIndex < atomNames->count; ++atomIndex)
+    {
+        if (stringsAreEqual(atomNames->names[atomIndex], rawAtom))
+        {
+            index = atomIndex;
+        }
+    }
+
+    if (index == -1)
+    {
+        index = atomNames->count;
+        ASSERT(atomNames->count < atomNames->capacity);
+        atomNames->names[atomNames->count] = rawAtom;
+        ++atomNames->count;
+    }
+
+    char result = (char)index + 'A';
+    return result;
+}
+
+static int getRawMoleculeAtomCount(const char* rawMolecule)
+{
+    int atomCount;
+    if (*rawMolecule == 'e')
+    {
+        atomCount = 1;
+    }
+    else
+    {
+        atomCount = 0;
+        while (*rawMolecule)
+        {
+            if (isUppercase(*rawMolecule))
+            {
+                ++atomCount;
+                ++rawMolecule;
+            }
+            else if (isLowercase(*rawMolecule))
+            {
+                ++rawMolecule;
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+    return atomCount;
+}
+
+static char* encodeMolecule(Arena* arena, AtomNameSet* atomNames, const char* rawMolecule)
+{
+    int atomCount = getRawMoleculeAtomCount(rawMolecule);
+    ASSERT(atomCount > 0);
+    char* result = pushString(arena, atomCount);
+    for (int atomIndex = 0; atomIndex < atomCount; ++atomIndex)
+    {
+        char* rawAtom = extractRawAtom(arena, &rawMolecule);
+        result[atomIndex] = encodeAtom(atomNames, rawAtom);
+    }
+    result[atomCount] = 0;
+    return result;
+}
+
+static const char* decodeAtom(char atom, AtomNameSet* atomNames)
+{
+    int index = atom - 'A';
+    ASSERT(index < atomNames->count);
+    const char* result = atomNames->names[index];
+    return result;
+}
+
+static void decodeMolecule(const char* molecule, AtomNameSet* atomNames, char* buf, int bufSize)
+{
+    int len = 0;
+    while (*molecule)
+    {
+        const char* decodedAtom = decodeAtom(*molecule, atomNames);
+        while (*decodedAtom)
+        {
+            buf[len] = *decodedAtom;
+            ++len;
+            ++decodedAtom;
+        }
+        ++molecule;
+    }
+    ASSERT(len < bufSize);
+    buf[len] = 0;
+}
+
+static Replacement extractReplacement(Arena* arena, AtomNameSet* atomNames, char** input)
+{
+    Replacement result = {};
+    char* atomWord = extractWord(arena, input);
+    result.atom = encodeAtom(atomNames, atomWord);
+    skipString(input, "=>");
+    char* moleculeWord = extractWord(arena, input);
+    result.molecule = encodeMolecule(arena, atomNames, moleculeWord);
+    return result;
+}
+
+static AtomNameSet makeAtomNameSet(Arena* arena, int capacity)
+{
+    AtomNameSet result = {};
+    result.capacity = capacity;
+    result.names = pushArray(arena, const char*, capacity);
+    return result;
+}
+
+static ReplacementList makeReplacementList(Arena* arena, int capacity)
+{
+    ReplacementList result = {};
+    result.capacity = capacity;
+    result.replacements = pushArray(arena, Replacement, capacity);
+    return result;
+}
+
+static ParseResult parseInput(Arena* arena, char* input)
+{
+    ParseResult result = {};
+
+    result.atomNames = makeAtomNameSet(arena, 128);
+
+    int replacementsCount = getReplacementsCount(input);
+    result.replacements = makeReplacementList(arena, replacementsCount);
+    result.replacements.count = replacementsCount;
+
+    for (int replacementIndex = 0; replacementIndex < replacementsCount; ++replacementIndex)
+    {
+        skipWhitespace(&input);
+        result.replacements.replacements[replacementIndex] = extractReplacement(arena, &result.atomNames, &input);
+    }
+
+    skipWhitespace(&input);
+    result.goal = encodeMolecule(arena, &result.atomNames, input);
+
+    return result;
+}
+
+static char* readEntireFile(Arena* arena, const char* path)
+{
+    char* result = nullptr;
+
+    HANDLE fileHandle = CreateFileA(
+        path,
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        NULL,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        NULL
+    );
+
+    if (fileHandle != INVALID_HANDLE_VALUE)
+    {
+        LARGE_INTEGER fileSize;
+        if (GetFileSizeEx(fileHandle, &fileSize))
+        {
+            char* buffer = pushString(arena, fileSize.LowPart);
+            if (buffer)
+            {
+                DWORD bytesRead;
+                if (ReadFile(fileHandle, buffer, fileSize.LowPart, &bytesRead, NULL) && bytesRead == fileSize.LowPart)
+                {
+                    buffer[fileSize.LowPart] = 0;
+                    result = buffer;
+                }
+                else
+                {
+                    arena->used = 0;
+                }
+            }
+        }
+        CloseHandle(fileHandle);
+    }
+
+    return result;
+}
+
+static void getMoleculesAfterOneReplacement(const char* molecule, ReplacementList* replacements, Arena* stringArena, StringSet* stringSet)
+{
+    int moleculeLen = getStringLength(molecule);
+    for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
+    {
+        Replacement* replacement = &replacements->replacements[replacementIndex];
+        int toLen = getStringLength(replacement->molecule);
+        for (int atomIndex = 0; atomIndex < moleculeLen; ++atomIndex)
+        {
+            if (molecule[atomIndex] == replacement->atom)
+            {
+                int newMoleculeLen = moleculeLen + toLen - 1;
+                size_t stringArenaSavedUsed = stringArena->used;
+                char* newMolecule = pushString(stringArena, newMoleculeLen);
+
+                int newIndex = 0;
+                for (int prefixIndex = 0; prefixIndex < atomIndex; ++prefixIndex, ++newIndex)
+                {
+                    newMolecule[newIndex] = molecule[prefixIndex];
+                }
+                for (int toAtomIndex = 0; toAtomIndex < toLen; ++toAtomIndex, ++newIndex)
+                {
+                    newMolecule[newIndex] = replacement->molecule[toAtomIndex];
+                }
+                for (int suffixIndex = atomIndex + 1; suffixIndex < moleculeLen; ++suffixIndex, ++newIndex)
+                {
+                    newMolecule[newIndex] = molecule[suffixIndex];
+                }
+                ASSERT(newIndex == newMoleculeLen);
+                newMolecule[newMoleculeLen] = 0;
+
+                if (!addStringToSet(stringSet, newMolecule))
+                {
+                    stringArena->used = stringArenaSavedUsed;
+                }
+            }
+        }
+    }
+}
+
+static int minimum(int a, int b)
+{
+    return (a < b) ? a : b;
+}
+
+struct ReachabilityMatrix
+{
+    char* data;
+    int dimSize;
+};
+
+static bool canReach(ReachabilityMatrix* matrix, char atomSrc, char atomDst)
+{
+    return matrix->data[(atomSrc - 'A') * matrix->dimSize + (atomDst - 'A')] == 1;
+}
+
+static ReachabilityMatrix makeReachabilityMatrix(Arena* arena, ReplacementList* replacements, AtomNameSet* atomNames, bool isSuffix)
+{
+    ReachabilityMatrix result = {};
+    result.dimSize = atomNames->count;
+    int sizeBytes = result.dimSize * result.dimSize;
+    result.data = pushArray(arena, char, sizeBytes);
+
+    // Clear to zero
+    for (int byteIndex = 0; byteIndex < sizeBytes; ++byteIndex)
+    {
+        result.data[byteIndex] = 0;
+    }
+
+    for (int replacementIndex = 0; replacementIndex < replacements->count; ++replacementIndex)
+    {
+        Replacement* replacement = &replacements->replacements[replacementIndex];
+        int toAtomIndex;
+        if (isSuffix)
+        {
+            int replacementMoleculeLen = getStringLength(replacement->molecule);
+            toAtomIndex = replacementMoleculeLen - 1;
+        }
+        else
+        {
+            toAtomIndex = 0;
+        }
+        result.data[(replacement->atom - 'A') * result.dimSize + (replacement->molecule[toAtomIndex] - 'A')] = 1;
+    }
+    
+    bool changesWereMade = true;
+    while (changesWereMade)
+    {
+        changesWereMade = false;
+        for (int atomSrc = 0; atomSrc < result.dimSize; ++atomSrc)
+        {
+            for (int atomDst = 0; atomDst < result.dimSize; ++atomDst)
+            {
+                if (result.data[atomSrc * result.dimSize + atomDst] == 1)
+                {
+                    for (int i = 0; i < result.dimSize; ++i)
+                    {
+                        if (result.data[atomDst * result.dimSize + i] == 1 && result.data[atomSrc * result.dimSize + i] == 0)
+                        {
+                            changesWereMade = true;
+                            result.data[atomSrc * result.dimSize + i] = 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+struct PrefixSuffixIndices
+{
+    int prefixAtomToReplaceIndex;
+    int prefixDstAtomIndex;
+
+    int suffixAtomToReplaceIndex;
+    int suffixDstAtomIndex;
+};
+
+static PrefixSuffixIndices getPrefixSuffixIndicesToReplace(int moleculeLen, int matchedPrefixLength, int matchedSuffixLength, int goalLen)
+{
+    PrefixSuffixIndices result = {};
+
+    if (matchedPrefixLength == moleculeLen)
+    {
+        result.prefixAtomToReplaceIndex = moleculeLen - 1;
+    }
+    else
+    {
+        ASSERT(matchedPrefixLength < moleculeLen);
+        result.prefixAtomToReplaceIndex = matchedPrefixLength;
+    }
+
+    if (matchedSuffixLength > 0)
+    {
+        if (matchedSuffixLength == moleculeLen)
+        {
+            result.suffixAtomToReplaceIndex = 0;
+        }
+        else
+        {
+            result.suffixAtomToReplaceIndex = moleculeLen - matchedSuffixLength - 1;
+        }
+    }
+    else
+    {
+        ASSERT(matchedSuffixLength == 0);
+        result.suffixAtomToReplaceIndex = moleculeLen - 1;
+    }
+
+    if (result.suffixAtomToReplaceIndex < result.prefixAtomToReplaceIndex)
+    {
+        result.prefixAtomToReplaceIndex = result.suffixAtomToReplaceIndex;
+    }
+
+    ASSERT(result.prefixAtomToReplaceIndex >= 0);
+    ASSERT(result.prefixAtomToReplaceIndex <= result.suffixAtomToReplaceIndex);
+    ASSERT(result.suffixAtomToReplaceIndex < moleculeLen);
+
+    result.prefixDstAtomIndex = result.prefixAtomToReplaceIndex;
+    result.suffixDstAtomIndex = matchedSuffixLength == 0 ? goalLen - 1 : goalLen - matchedSuffixLength - 1;
+
+    ASSERT(result.prefixDstAtomIndex >= 0);
+    ASSERT(result.prefixDstAtomIndex <= result.suffixDstAtomIndex);
+    ASSERT(result.suffixDstAtomIndex < goalLen);
+
+    return result;
+}
+
+static void insertNewMolecule(Arena* arena, Heap* heap, HeapNode* top, const char* goal, Replacement* prefixReplacement, Replacement* suffixReplacement,
+    int prefixAtomToReplaceIndex, int suffixAtomToReplaceIndex, AtomNameSet* atomNames, StringSet* stringSet,
+    ReachabilityMatrix* prefixReachabilityMatrix, ReachabilityMatrix *suffixReachabilityMatrix)
+{
+    ASSERT(prefixReplacement);
+    int topMoleculeLen = getStringLength(top->molecule);
+    int goalLen = getStringLength(goal);
+    int prefixReplacementLen = getStringLength(prefixReplacement->molecule);
+    
+    int suffixReplacementLen;
+    int newMoleculeLen;
+
+    if (suffixReplacement)
+    {
+        suffixReplacementLen = getStringLength(suffixReplacement->molecule);
+        newMoleculeLen = topMoleculeLen + (prefixReplacementLen - 1) + (suffixReplacementLen - 1);
+    }
+    else
+    {
+        suffixReplacementLen = 0;
+        newMoleculeLen = topMoleculeLen + (prefixReplacementLen - 1);
+    }
+
+    if (newMoleculeLen <= goalLen)
+    {
+        char* newMolecule = pushString(arena, newMoleculeLen);
+        int newIndex = 0;
+        for (int prefixIndex = 0; prefixIndex < prefixAtomToReplaceIndex; ++prefixIndex, ++newIndex)
+        {
+            newMolecule[newIndex] = top->molecule[prefixIndex];
+        }
+        for (int prefixReplacementIndex = 0; prefixReplacementIndex < prefixReplacementLen; ++prefixReplacementIndex, ++newIndex)
+        {
+            newMolecule[newIndex] = prefixReplacement->molecule[prefixReplacementIndex];
+        }
+        for (int middleIndex = prefixAtomToReplaceIndex + 1; middleIndex < suffixAtomToReplaceIndex; ++middleIndex, ++newIndex)
+        {
+            newMolecule[newIndex] = top->molecule[middleIndex];
+        }
+        for (int suffixReplacementIndex = 0; suffixReplacementIndex < suffixReplacementLen; ++suffixReplacementIndex, ++newIndex)
+        {
+            newMolecule[newIndex] = suffixReplacement->molecule[suffixReplacementIndex];
+        }
+        for (int suffixIndex = suffixAtomToReplaceIndex + 1; suffixIndex < topMoleculeLen; ++suffixIndex, ++newIndex)
+        {
+            newMolecule[newIndex] = top->molecule[suffixIndex];
+        }
+        ASSERT(newIndex == newMoleculeLen);
+        newMolecule[newMoleculeLen] = 0;
+
+        int newMatchedPrefixLength = 0;
+        for (int i = 0; i < newMoleculeLen; ++i)
+        {
+            if (newMolecule[i] == goal[i])
+            {
+                ++newMatchedPrefixLength;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        int newMatchedSuffixLength;
+
+        if (newMatchedPrefixLength == newMoleculeLen)
+        {
+            newMatchedSuffixLength = 0;
+        }
+        else
+        {
+            ASSERT(newMatchedPrefixLength < newMoleculeLen);
+            newMatchedSuffixLength = 0;
+            for (int i = 0; i < newMoleculeLen; ++i)
+            {
+                if (newMolecule[newMoleculeLen - 1 - i] == goal[goalLen - 1 - i])
+                {
+                    ++newMatchedSuffixLength;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+        }
+
+        ASSERT(newMatchedPrefixLength + newMatchedSuffixLength <= newMoleculeLen);
+
+        int newSteps = top->steps + (suffixReplacement ? 2 : 1);
+
+        printf("Insert new molecule\n");
+        printf("newMoleculeLen = %d\n", newMoleculeLen);
+        printf("newMatchedPrefixLength = %d\n", newMatchedPrefixLength);
+        printf("newMatchedSuffixLength = %d\n", newMatchedSuffixLength);
+        printf("newMatchedLength = %d\n", newMatchedPrefixLength + newMatchedSuffixLength);
+        printf("newSteps = %d\n", newSteps);
+
+        char decodedMolecule[1024];
+        decodeMolecule(newMolecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+        printf("newMolecule = %s\n", decodedMolecule);
+
+        PrefixSuffixIndices indices = getPrefixSuffixIndicesToReplace(newMoleculeLen, newMatchedPrefixLength, newMatchedSuffixLength, goalLen);
+        char prefixAtomToReplace = newMolecule[indices.prefixAtomToReplaceIndex];
+        char prefixDstAtom = goal[indices.prefixDstAtomIndex];
+        char suffixAtomToReplace = newMolecule[indices.suffixAtomToReplaceIndex];
+        char suffixDstAtom = goal[indices.suffixDstAtomIndex];
+
+        if (canReach(prefixReachabilityMatrix, prefixAtomToReplace, prefixDstAtom))
+        {
+            if (canReach(suffixReachabilityMatrix, suffixAtomToReplace, suffixDstAtom))
+            {
+                if (addStringToSet(stringSet, newMolecule))
+                {
+                    insert(heap, newMolecule, newMatchedPrefixLength, newMatchedSuffixLength, newSteps);
+                }
+                else
+                {
+                    printf("newMolecule already have seen, skip\n");
+                }
+            }
+            else
+            {
+                printf("Can't reach suffix %s -> %s, skip\n", decodeAtom(suffixAtomToReplace, atomNames), decodeAtom(suffixDstAtom, atomNames));
+            }
+        }
+        else
+        {
+            printf("Can't reach prefix %s -> %s, skip\n", decodeAtom(prefixAtomToReplace, atomNames), decodeAtom(prefixDstAtom, atomNames));
+        }
+    }
+    else
+    {
+        printf("newMoleculeLen > goalLen, skip\n");
+    }
+}
+
+static int findStepsToGoal(Arena* arena, const char* goal, ReplacementList* replacements, AtomNameSet* atomNames)
+{
+    size_t savedArenaUsed = arena->used;
+
+    Heap heap = makeHeap(arena, 100000);
+    StringSet stringSet = makeStringSet(arena, 10000139);
+    ReachabilityMatrix prefixReachabilityMatrix = makeReachabilityMatrix(arena, replacements, atomNames, false);
+    ReachabilityMatrix suffixReachabilityMatrix = makeReachabilityMatrix(arena, replacements, atomNames, true);
+
+    int goalLen = getStringLength(goal);
+
+    char* startMolecule = encodeMolecule(arena, atomNames, "e");
+    insert(&heap, startMolecule, 0, 0, 0);
+
+    int result = -1;
+
+    size_t topsRemovedCount = 0;
+    time_t startTime = time(NULL);
+    char decodedMolecule[1024];
+
+    while (result < 0)
+    {
+        printf("\n");
+        printf("%zu| Top of heap (%d nodes)\n", topsRemovedCount, heap.count);
+
+        int N = 10;
+        if (heap.count < N)
+        {
+            N = heap.count;
+        }
+        for (int index = 0; index < N; ++index)
+        {
+            HeapNode* node = &heap.nodes[index];
+            decodeMolecule(node->molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            printf("%d: %d|%d|%d|%d|%d|%s\n", index, node->matchedLength, node->matchedPrefixLength, node->matchedSuffixLength, getStringLength(node->molecule), node->steps, decodedMolecule);
+        }
+        printf("\n");
+
+        HeapNode top = removeTop(&heap);
+        int topMoleculeLen = getStringLength(top.molecule);
+        ASSERT(topMoleculeLen <= goalLen);
+
+        ++topsRemovedCount;
+
+        time_t now = time(NULL);
+
+        printf("Seconds: %jd\n", now - startTime);
+        printf("Arena used: %zu / %zu (%f)\n", arena->used, arena->size, (float)arena->used / arena->size);
+        printf("String set used: %zu / %zu (%f)\n", stringSet.count, stringSet.capacity, (float)stringSet.count / stringSet.capacity);
+        printf("Heap used: %d / %d (%f)\n", heap.count, heap.capacity, (float)heap.count / heap.capacity);
+
+        decodeMolecule(top.molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+        printf("%s\n", decodedMolecule);
+
+        decodeMolecule(goal, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+        printf("%s\n", decodedMolecule);
+
+        if (top.matchedLength == goalLen)
+        {
+            result = top.steps;
+        }
+        else
+        {
+            PrefixSuffixIndices indices = getPrefixSuffixIndicesToReplace(topMoleculeLen, top.matchedPrefixLength, top.matchedSuffixLength, goalLen);
+            int prefixAtomToReplaceIndex1 = indices.prefixAtomToReplaceIndex;
+            int suffixAtomToReplaceIndex1 = indices.suffixAtomToReplaceIndex;
+
+            char prefixAtomToReplace1 = top.molecule[prefixAtomToReplaceIndex1];
+            char suffixAtomToReplace1 = top.molecule[suffixAtomToReplaceIndex1];
+
+            int prefixDstAtomIndex1 = prefixAtomToReplaceIndex1;
+            int suffixDstAtomIndex1 = top.matchedSuffixLength == 0 ? goalLen - 1 : goalLen - top.matchedSuffixLength - 1;
+
+            ASSERT(prefixDstAtomIndex1 >= 0);
+            ASSERT(prefixDstAtomIndex1 <= suffixDstAtomIndex1);
+            ASSERT(suffixDstAtomIndex1 < goalLen);
+
+            char prefixDstAtom1 = goal[prefixDstAtomIndex1];
+            char suffixDstAtom1 = goal[suffixDstAtomIndex1];
+
+            printf("Prefix atom1: %d, %s\n", prefixAtomToReplaceIndex1, decodeAtom(prefixAtomToReplace1, atomNames));
+            printf("Prefix dst1: %d, %s\n", prefixDstAtomIndex1, decodeAtom(prefixDstAtom1, atomNames));
+
+            printf("Suffix atom1: %d, %s\n", suffixAtomToReplaceIndex1, decodeAtom(suffixAtomToReplace1, atomNames));
+            printf("Suffix dst1: %d, %s\n", suffixDstAtomIndex1, decodeAtom(suffixDstAtom1, atomNames));
+
+            ASSERT(canReach(&prefixReachabilityMatrix, prefixAtomToReplace1, prefixDstAtom1));
+            ASSERT(canReach(&suffixReachabilityMatrix, suffixAtomToReplace1, suffixDstAtom1));
+
+            int prefixDelta = 0;
+            if (prefixAtomToReplaceIndex1 > 0 && canReach(&prefixReachabilityMatrix, top.molecule[prefixAtomToReplaceIndex1 - 1], top.molecule[prefixAtomToReplaceIndex1 - 1]))
+            {
+                prefixDelta = -1;
+                printf("Can replace matched prefix atom: %s\n", decodeAtom(top.molecule[prefixAtomToReplaceIndex1 - 1], atomNames));
+            }
+            int suffixDelta = 0;
+            if (suffixAtomToReplaceIndex1 < topMoleculeLen - 1 && canReach(&suffixReachabilityMatrix, top.molecule[suffixAtomToReplaceIndex1 + 1], top.molecule[suffixAtomToReplaceIndex1 + 1]))
+            {
+                suffixDelta = +1;
+                printf("Can replace matched suffix atom: %s\n", decodeAtom(top.molecule[suffixAtomToReplaceIndex1 + 1], atomNames));
+            }
+
+            for (; prefixDelta <= 0; ++prefixDelta)
+            {
+                for (; suffixDelta >= 0; --suffixDelta)
+                {
+                    printf("prefixDelta = %d, suffixDelta = %d\n", prefixDelta, suffixDelta);
+                    int prefixAtomToReplaceIndex = prefixAtomToReplaceIndex1 + prefixDelta;
+                    int suffixAtomToReplaceIndex = suffixAtomToReplaceIndex1 + suffixDelta;
+                    char prefixAtomToReplace = top.molecule[prefixAtomToReplaceIndex];
+                    char suffixAtomToReplace = top.molecule[suffixAtomToReplaceIndex];
+
+                    ASSERT(prefixAtomToReplaceIndex >= 0);
+                    ASSERT(prefixAtomToReplaceIndex <= suffixAtomToReplaceIndex);
+                    ASSERT(suffixAtomToReplaceIndex < topMoleculeLen);
+
+                    int prefixDstAtomIndex = prefixAtomToReplaceIndex;
+                    int suffixDstAtomIndex = top.matchedSuffixLength == 0 ? goalLen - 1 : goalLen - top.matchedSuffixLength - 1;
+                    char prefixDstAtom = goal[prefixDstAtomIndex];
+                    char suffixDstAtom = goal[suffixDstAtomIndex];
+                    if (suffixDelta > 0)
+                    {
+                        suffixDstAtom = suffixAtomToReplace;
+                    }
+
+                    ASSERT(prefixDstAtomIndex >= 0);
+                    ASSERT(prefixDstAtomIndex <= suffixDstAtomIndex);
+                    ASSERT(suffixDstAtomIndex < goalLen);
+
+                    bool foundPrefixReplacement = false;
+                    for (int prefixReplacementIndex = 0; prefixReplacementIndex < replacements->count; ++prefixReplacementIndex)
+                    {
+                        Replacement* prefixReplacement = &replacements->replacements[prefixReplacementIndex];
+                        if (prefixReplacement->atom == prefixAtomToReplace)
+                        {
+                            foundPrefixReplacement = true;
+                            decodeMolecule(prefixReplacement->molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+                            printf("---- Prefix replacement: %s -> %s\n", decodeAtom(prefixReplacement->atom, atomNames), decodedMolecule);
+                            if (prefixAtomToReplaceIndex == suffixAtomToReplaceIndex)
+                            {
+                                printf("prefixAtomToReplaceIndex == suffixAtomToReplaceIndex\n");
+                                insertNewMolecule(arena, &heap, &top, goal, prefixReplacement, nullptr, prefixAtomToReplaceIndex, suffixAtomToReplaceIndex, atomNames, &stringSet, &prefixReachabilityMatrix, &suffixReachabilityMatrix);
+                            }
+                            else
+                            {
+                                printf("prefixAtomToReplaceIndex != suffixAtomToReplaceIndex\n");
+                                bool foundSuffixReplacement = false;
+                                for (int suffixReplacementIndex = 0; suffixReplacementIndex < replacements->count; ++suffixReplacementIndex)
+                                {
+                                    Replacement* suffixReplacement = &replacements->replacements[suffixReplacementIndex];
+                                    if (suffixReplacement->atom == suffixAtomToReplace)
+                                    {
+                                        foundSuffixReplacement = true;
+                                        decodeMolecule(suffixReplacement->molecule, atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+                                        printf("-- Suffix replacement: %s -> %s\n", decodeAtom(suffixReplacement->atom, atomNames), decodedMolecule);
+                                        insertNewMolecule(arena, &heap, &top, goal, prefixReplacement, suffixReplacement, prefixAtomToReplaceIndex, suffixAtomToReplaceIndex, atomNames, &stringSet, &prefixReachabilityMatrix, &suffixReachabilityMatrix);
+                                    }
+                                }
+                                if (!foundSuffixReplacement)
+                                {
+                                    printf("No suffix replacement %s -> %s, skip\n", decodeAtom(suffixAtomToReplace, atomNames), decodeAtom(suffixDstAtom, atomNames));
+                                }
+                            }
+                        }
+                    }
+                    if (!foundPrefixReplacement)
+                    {
+                        printf("No prefix replacement %s -> %s, skip\n", decodeAtom(prefixAtomToReplace, atomNames), decodeAtom(prefixDstAtom, atomNames));
+                    }
+                }
+            }
+        }
+
+        //getc(stdin);
+    }
+
+    arena->used = savedArenaUsed;
+
+    return result;
+}
+
+static void addReplacement(ReplacementList* list, Arena* arena, AtomNameSet* atomNames, const char* rawAtom, const char* rawMolecule)
+{
+    ASSERT(list->count < list->capacity);
+    list->replacements[list->count].atom = encodeAtom(atomNames, rawAtom);
+    list->replacements[list->count].molecule = encodeMolecule(arena, atomNames, rawMolecule);
+    ++list->count;
+}
+
+static void printMoleculesInSet(StringSet* set, AtomNameSet* atomNames)
+{
+    for (int i = 0; i < set->capacity; ++i)
+    {
+        if (set->strings[i])
+        {
+            char decodedMolecule[512];
+            decodeMolecule(set->strings[i], atomNames, decodedMolecule, ARRAY_COUNT(decodedMolecule));
+            printf("%s\n", decodedMolecule);
+        }
+    }
+}
+
+static void testExample1(Arena* arena)
+{
+    size_t savedArenaUsed = arena->used;
+
+    AtomNameSet atomNames = makeAtomNameSet(arena, 64);
+    ReplacementList replacements = makeReplacementList(arena, 16);
+
+    addReplacement(&replacements, arena, &atomNames, "H", "HO");
+    addReplacement(&replacements, arena, &atomNames, "H", "OH");
+    addReplacement(&replacements, arena, &atomNames, "O", "HH");
+
+    char* goal = encodeMolecule(arena, &atomNames, "HOH");
+    StringSet stringSet = makeStringSet(arena, 16);
+    getMoleculesAfterOneReplacement(goal, &replacements, arena, &stringSet);
+
+    ASSERT(stringSet.count == 4);
+
+#if 0
+    printMoleculesInSet(&stringSet, &atomNames);
+#endif
+
+    arena->used = savedArenaUsed;
+}
+
+static void testExample2(Arena* arena)
+{
+    size_t savedArenaUsed = arena->used;
+
+    AtomNameSet atomNames = makeAtomNameSet(arena, 64);
+    ReplacementList replacements = makeReplacementList(arena, 16);
+
+    addReplacement(&replacements, arena, &atomNames, "e", "H");
+    addReplacement(&replacements, arena, &atomNames, "e", "O");
+    addReplacement(&replacements, arena, &atomNames, "H", "HO");
+    addReplacement(&replacements, arena, &atomNames, "H", "OH");
+    addReplacement(&replacements, arena, &atomNames, "O", "HH");
+
+    char* goal1 = encodeMolecule(arena, &atomNames, "HOH");
+    int answer1 = findStepsToGoal(arena, goal1, &replacements, &atomNames);
+    ASSERT(answer1 == 3);
+
+    char* goal2 = encodeMolecule(arena, &atomNames, "HOHOHO");
+    int answer2 = findStepsToGoal(arena, goal2, &replacements, &atomNames);
+    ASSERT(answer2 == 6);
+
+    arena->used = savedArenaUsed;
+}
+
+static void doPart1(Arena* arena, ParseResult* parseResult)
+{
+    size_t savedArenaUsed = arena->used;
+    StringSet stringSet = makeStringSet(arena, 2029);
+    getMoleculesAfterOneReplacement(parseResult->goal, &parseResult->replacements, arena, &stringSet);
+    ASSERT(stringSet.count == 518);
+    arena->used = savedArenaUsed;
+}
+
+static void doPart2(Arena* arena, ParseResult* parseResult)
+{
+    int answer = findStepsToGoal(arena, parseResult->goal, &parseResult->replacements, &parseResult->atomNames);
+    char buf[64];
+    intToString(answer, buf);
+    printLine(buf);
+}
+
+int main()
+{
+    size_t arenaSize = GIGABYTES(8);
+    void* memory = VirtualAlloc(NULL, arenaSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    ASSERT(memory);
+    Arena arena = makeArena(memory, arenaSize);
+
+#if 0
+    printf("testExample1()...");
+    testExample1(&arena);
+    printf("OK\n");
+
+    printf("testExample2()...");
+    testExample2(&arena);
+    printf("OK\n");
+#endif
+
+    char* input = readEntireFile(&arena, "input.txt");
+    if (input)
+    {
+        ParseResult parseResult = parseInput(&arena, input);
+#if 0
+        printf("doPart1()...");
+        printf("OK\n");
+        doPart1(&arena, &parseResult);
+#endif
+        printf("doPart2()...");
+        doPart2(&arena, &parseResult);
+        printf("OK\n");
+    }
+    else
+    {
+        printLine("Failed to read input file");
+    }
+
+    return 0;
+}
