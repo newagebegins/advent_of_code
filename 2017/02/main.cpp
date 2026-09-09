@@ -119,14 +119,74 @@ CalculateChecksum(char *SpreadsheetText)
     return(Checksum);
 }
 
+internal u32
+CalculateChecksum2(char *SpreadsheetText)
+{
+    u32 Checksum = 0;
+    u32 Row[64];
+    parser Parser = CreateParser(SpreadsheetText);
+
+    while(ParsingSpreadsheet(&Parser))
+    {
+        u32 RowSize = 0;
+        SkipAllWhitespace(&Parser);
+        while(ParsingRow(&Parser))
+        {
+            u32 Value = GetU32(&Parser);
+            Assert(RowSize < ArrayCount(Row));
+            Row[RowSize++] = Value;
+            SkipSpacesAndTabs(&Parser);
+        }
+        if(RowSize)
+        {
+            b32 Found = false;
+            for(u32 I0 = 0;
+                (I0 < RowSize) && !Found;
+                ++I0)
+            {
+                u32 N0 = Row[I0];
+                for(u32 I1 = I0 + 1;
+                    I1 < RowSize;
+                    ++I1)
+                {
+                    u32 N1 = Row[I1];
+                    Assert(N0 != N1);
+                    u32 Bigger = ((N0 < N1) ? N1 : N0);
+                    u32 Smaller = ((N0 < N1) ? N0 : N1);
+                    if((Bigger % Smaller) == 0)
+                    {
+                        Checksum += (Bigger / Smaller);
+                        Found = true;
+                        break;
+                    }
+                }
+            }
+            Assert(Found);
+        }
+    }
+    return(Checksum);
+}
+
 int
 main(void)
 {
+    // NOTE(slava): Part 1
+
     char *TestInput = ReadEntireFileAndNullTerminate("test_input.txt");
     u32 TestChecksum = CalculateChecksum(TestInput);
     Assert(TestChecksum == 18);
 
     char *Input = ReadEntireFileAndNullTerminate("input.txt");
+
     u32 Checksum = CalculateChecksum(Input);
     Assert(Checksum == 50376);
+
+    // NOTE(slava): Part 2
+
+    char *TestInput2 = ReadEntireFileAndNullTerminate("test_input2.txt");
+    u32 TestChecksum2 = CalculateChecksum2(TestInput2);
+    Assert(TestChecksum2 == 9);
+
+    u32 Checksum2 = CalculateChecksum2(Input);
+    Assert(Checksum2 == 267);
 }

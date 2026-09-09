@@ -29,6 +29,7 @@ typedef double r64;
 
 typedef size_t memory_index;
 
+#define ArrayCount(Array) (sizeof(Array)/sizeof((Array)[0]))
 #define Assert(Expression) if(!(Expression)) {*(int *)0 = 0;}
 
 internal char *
