@@ -95,37 +95,49 @@ ParseOffsets(char *Input, int *Offsets, int MaxOffsetCount)
 }
 
 static int
-CountStepsToReachExit(int *Offsets, int OffsetCount)
+CountStepsToReachExit(int *Offsets, int OffsetCount, bool IsPart2)
 {
     int Result = 0;
     int OffsetIndex = 0;
     while((0 <= OffsetIndex) && (OffsetIndex < OffsetCount))
     {
         int Offset = Offsets[OffsetIndex];
-        ++Offsets[OffsetIndex];
+        if(IsPart2 && (Offset >= 3))
+        {
+            --Offsets[OffsetIndex];
+        }
+        else
+        {
+            ++Offsets[OffsetIndex];
+        }
         OffsetIndex += Offset;
         ++Result;
     }
     return(Result);
 }
 
-int
-main(void)
+static void
+TestCountStepsToReachExit(char *InputFile, int ExpectedSteps, bool IsPart2)
 {
     static char PuzzleInput[8192];
     static int Offsets[2048];
 
-    {
-        ReadEntireFileAndNullTerminate("test_input.txt", PuzzleInput, ArrayCount(PuzzleInput));
-        int OffsetCount = ParseOffsets(PuzzleInput, Offsets, ArrayCount(Offsets));
-        int Steps = CountStepsToReachExit(Offsets, OffsetCount);
-        assert(Steps == 5);
-    }
+    ReadEntireFileAndNullTerminate(InputFile, PuzzleInput, ArrayCount(PuzzleInput));
+    int OffsetCount = ParseOffsets(PuzzleInput, Offsets, ArrayCount(Offsets));
+    int Steps = CountStepsToReachExit(Offsets, OffsetCount, IsPart2);
+    assert(Steps == ExpectedSteps);
+}
 
-    {
-        ReadEntireFileAndNullTerminate("input.txt", PuzzleInput, ArrayCount(PuzzleInput));
-        int OffsetCount = ParseOffsets(PuzzleInput, Offsets, ArrayCount(Offsets));
-        int Steps = CountStepsToReachExit(Offsets, OffsetCount);
-        assert(Steps == 339351);
-    }
+int
+main(void)
+{
+    // NOTE(slava): Part 1
+
+    TestCountStepsToReachExit("test_input.txt", 5, false);
+    TestCountStepsToReachExit("input.txt", 339351, false);
+
+    // NOTE(slava): Part 2
+
+    TestCountStepsToReachExit("test_input.txt", 10, true);
+    TestCountStepsToReachExit("input.txt", 24315397, true);
 }
