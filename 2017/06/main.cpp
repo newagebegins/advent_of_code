@@ -69,9 +69,16 @@ StatesAreEqual(memory_state *A, memory_state *B, u32 BankCount)
     return(Result);
 }
 
-internal u32
+struct count_cycles_result
+{
+    u32 UntilRepeat;
+    u32 LoopSize;
+};
+
+internal count_cycles_result
 CountRedistributionCyclesUntilRepeat(memory_state *State, u32 BankCount)
 {
+    count_cycles_result Result = {};
     local_persist memory_state Cache[4096];
     u32 CycleCount = 0;
     b32 FoundRepeat = false;
@@ -90,12 +97,14 @@ CountRedistributionCyclesUntilRepeat(memory_state *State, u32 BankCount)
         {
             if(StatesAreEqual(State, Cache + CacheIndex, BankCount))
             {
+                Result.UntilRepeat = CycleCount;
+                Result.LoopSize = (CycleCount - 1) - CacheIndex;
                 FoundRepeat = true;
                 break;
             }
         }
     }
-    return(CycleCount);
+    return(Result);
 }
 
 int
@@ -103,13 +112,15 @@ main(void)
 {
     {
         memory_state State = {0, 2, 7, 0};
-        u32 Cycles = CountRedistributionCyclesUntilRepeat(&State, 4);
-        Assert(Cycles == 5);
+        count_cycles_result Cycles = CountRedistributionCyclesUntilRepeat(&State, 4);
+        Assert(Cycles.UntilRepeat == 5);
+        Assert(Cycles.LoopSize == 4);
     }
 
     {
         memory_state State = {11, 11, 13, 7, 0, 15, 5, 5, 4, 4, 1, 1, 7, 1, 15, 11};
-        u32 Cycles = CountRedistributionCyclesUntilRepeat(&State, 16);
-        Assert(Cycles == 4074);
+        count_cycles_result Cycles = CountRedistributionCyclesUntilRepeat(&State, 16);
+        Assert(Cycles.UntilRepeat == 4074);
+        Assert(Cycles.LoopSize == 2793);
     }
 }
