@@ -1,5 +1,6 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <limits.h>
 
 #define internal static
 #define local_persist static
@@ -170,7 +171,10 @@ struct program
 {
     str Name;
     s32 Weight;
+    s32 TotalWeight;
     s32 ParentIndex;
+    s32 Children[8];
+    u32 ChildCount;
 };
 
 struct program_storage
@@ -199,7 +203,9 @@ FindOrCreateProgramWithName(str Name, program_storage *Storage)
         Assert(ProgramIndex < ArrayCount(Storage->Programs));
         Storage->Programs[ProgramIndex].Name = Name;
         Storage->Programs[ProgramIndex].Weight = INVALID_WEIGHT;
+        Storage->Programs[ProgramIndex].TotalWeight = INVALID_WEIGHT;
         Storage->Programs[ProgramIndex].ParentIndex = INVALID_PROGRAM_INDEX;
+        Storage->Programs[ProgramIndex].ChildCount = 0;
     }
     return(ProgramIndex);
 }
@@ -214,11 +220,10 @@ ParseInput(char *Input, program_storage *Storage)
 
     while(Parser.At[0])
     {
-        str Name = GetName(&Parser);
-        s32 ProgramIndex = FindOrCreateProgramWithName(Name, Storage);
+        s32 ProgramIndex = FindOrCreateProgramWithName(GetName(&Parser), Storage);
+        program *Program = Storage->Programs + ProgramIndex;
         SkipString(&Parser, " (");
-        u32 Weight = GetU32(&Parser);
-        Storage->Programs[ProgramIndex].Weight = Weight;
+        Program->Weight = GetU32(&Parser);
         SkipChar(&Parser, ')');
         SkipWhitespace(&Parser);
         if(Parser.At[0] == '-')
@@ -226,9 +231,11 @@ ParseInput(char *Input, program_storage *Storage)
             SkipString(&Parser, "-> ");
             for(;;)
             {
-                str ChildName = GetName(&Parser);
-                s32 ChildIndex = FindOrCreateProgramWithName(ChildName, Storage);
-                Storage->Programs[ChildIndex].ParentIndex = ProgramIndex;
+                s32 ChildIndex = FindOrCreateProgramWithName(GetName(&Parser), Storage);
+                program *Child = Storage->Programs + ChildIndex;
+                Child->ParentIndex = ProgramIndex;
+                Assert(Program->ChildCount < ArrayCount(Program->Children));
+                Program->Children[Program->ChildCount++] = ChildIndex;
                 if(Parser.At[0] == ',')
                 {
                     SkipString(&Parser, ", ");
@@ -260,6 +267,74 @@ FindBottomProgramIndex(program_storage *Storage)
     return(Result);
 }
 
+internal void
+FindTotalWeight(program_storage *Storage, s32 ParentIndex)
+{
+    program *Parent = Storage->Programs + ParentIndex;
+    Assert(Parent->TotalWeight == INVALID_WEIGHT);
+    Parent->TotalWeight = Parent->Weight;
+    for(u32 Index = 0;
+        Index < Parent->ChildCount;
+        ++Index)
+    {
+        s32 ChildIndex = Parent->Children[Index];
+        program *Child = Storage->Programs + ChildIndex;
+        FindTotalWeight(Storage, ChildIndex);
+        Assert(Child->TotalWeight != INVALID_WEIGHT);
+        Assert(Parent->TotalWeight < INT_MAX - Child->TotalWeight);
+        Parent->TotalWeight += Child->TotalWeight;
+    }
+}
+
+struct unbalanced_program
+{
+    s32 Index;
+    s32 BalancedWeight;
+};
+
+internal unbalanced_program
+FindUnbalancedProgram(program_storage *Storage, s32 ParentIndex)
+{
+    unbalanced_program Result;
+    Result.Index = INVALID_PROGRAM_INDEX;
+    Result.BalancedWeight = INVALID_WEIGHT;
+    program *Parent = Storage->Programs + ParentIndex;
+    Assert(Parent->ChildCount > 2);
+    for(u32 IndexA = 0;
+        IndexA < Parent->ChildCount;
+        ++IndexA)
+    {
+        u32 IndexB = (IndexA + 1) % Parent->ChildCount;
+        u32 IndexC = (IndexA + 2) % Parent->ChildCount;
+        s32 ChildAIndex = Parent->Children[IndexA];
+        s32 ChildBIndex = Parent->Children[IndexB];
+        s32 ChildCIndex = Parent->Children[IndexC];
+        program *ChildA = Storage->Programs + ChildAIndex;
+        program *ChildB = Storage->Programs + ChildBIndex;
+        program *ChildC = Storage->Programs + ChildCIndex;
+        if((ChildA->TotalWeight != ChildB->TotalWeight) &&
+           (ChildA->TotalWeight != ChildC->TotalWeight))
+        {
+            Assert(ChildB->TotalWeight == ChildC->TotalWeight);
+            unbalanced_program Unbalanced = FindUnbalancedProgram(Storage, ChildAIndex);
+            if(Unbalanced.Index == INVALID_PROGRAM_INDEX)
+            {
+                s32 Delta = ChildB->TotalWeight - ChildA->TotalWeight;
+                s32 BalancedWeight = ChildA->Weight + Delta;
+                Assert(BalancedWeight > 0);
+                Assert((ChildA->TotalWeight - ChildA->Weight + BalancedWeight) == ChildB->TotalWeight);
+                Result.Index = ChildAIndex;
+                Result.BalancedWeight = BalancedWeight;
+            }
+            else
+            {
+                Result = Unbalanced;
+            }
+        }
+    }
+    return(Result);
+}
+
 int
 main(void)
 {
@@ -271,6 +346,13 @@ main(void)
         ParseInput(PuzzleInput, &Storage);
         s32 ProgramIndex = FindBottomProgramIndex(&Storage);
         Assert(StringsAreEqual(Storage.Programs[ProgramIndex].Name, "tknk"));
+
+        FindTotalWeight(&Storage, ProgramIndex);
+        unbalanced_program UnbalancedResult = FindUnbalancedProgram(&Storage, ProgramIndex);
+        Assert(UnbalancedResult.Index != INVALID_PROGRAM_INDEX);
+        program *Unbalanced = Storage.Programs + UnbalancedResult.Index;
+        Assert(StringsAreEqual(Unbalanced->Name, "ugml"));
+        Assert(UnbalancedResult.BalancedWeight == 60);
     }
 
     {
@@ -278,5 +360,12 @@ main(void)
         ParseInput(PuzzleInput, &Storage);
         s32 ProgramIndex = FindBottomProgramIndex(&Storage);
         Assert(StringsAreEqual(Storage.Programs[ProgramIndex].Name, "uownj"));
+
+        FindTotalWeight(&Storage, ProgramIndex);
+        unbalanced_program UnbalancedResult = FindUnbalancedProgram(&Storage, ProgramIndex);
+        Assert(UnbalancedResult.Index != INVALID_PROGRAM_INDEX);
+        program *Unbalanced = Storage.Programs + UnbalancedResult.Index;
+        Assert(StringsAreEqual(Unbalanced->Name, "mfzpvpj"));
+        Assert(UnbalancedResult.BalancedWeight == 596);
     }
 }
