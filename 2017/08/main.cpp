@@ -180,9 +180,11 @@ SkipString(parser *Parser, char *String)
     }
 }
 
-internal void
+internal s32
 RunInstructionsFromInput(register_storage *Storage, char *Input)
 {
+    s32 LargestValueSeen = INT_MIN;
+
     parser Parser;
     Parser.At = Input;
 
@@ -237,10 +239,16 @@ RunInstructionsFromInput(register_storage *Storage, char *Input)
         if(ComparisonSuccess)
         {
             Storage->Values[RegisterIndexToModify] += Delta;
+            if(LargestValueSeen < Storage->Values[RegisterIndexToModify])
+            {
+                LargestValueSeen = Storage->Values[RegisterIndexToModify];
+            }
         }
 
         SkipWhitespace(&Parser);
     }
+
+    return(LargestValueSeen);
 }
 
 internal char *
@@ -288,13 +296,15 @@ main(void)
     Storage.Values = PushArray(&Arena, Storage.MaxCount, s32);
 
     char *Input = ReadEntireFileAndNullTerminate(&Arena, "test_input.txt");
-    RunInstructionsFromInput(&Storage, Input);
+    s32 LargestValueSeen = RunInstructionsFromInput(&Storage, Input);
     s32 LargestValue = GetLargestRegisterValue(&Storage);
     Assert(LargestValue == 1);
+    Assert(LargestValueSeen == 10);
 
     Input = ReadEntireFileAndNullTerminate(&Arena, "input.txt");
     Storage.Count = 1;
-    RunInstructionsFromInput(&Storage, Input);
+    LargestValueSeen = RunInstructionsFromInput(&Storage, Input);
     LargestValue = GetLargestRegisterValue(&Storage);
     Assert(LargestValue == 8022);
+    Assert(LargestValueSeen == 9819);
 }
