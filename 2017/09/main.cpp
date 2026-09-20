@@ -27,7 +27,7 @@ ReadEntireFileAndNullTerminate(char *Filename)
     return(Result);
 }
 
-enum token
+enum token_type
 {
     Token_Unknown,
     Token_BeginGroup,
@@ -35,6 +35,12 @@ enum token
     Token_Garbage,
     Token_Comma,
     Token_EndOfStream,
+};
+
+struct token
+{
+    token_type Type;
+    u32 GarbageCharCount;
 };
 
 struct parser
@@ -61,36 +67,36 @@ SkipWhitespace(parser *Parser)
 internal token
 GetToken(parser *Parser)
 {
-    token Result = Token_Unknown;
+    token Result = {};
     SkipWhitespace(Parser);
     switch(Parser->At[0])
     {
         case 0:
         {
-            Result = Token_EndOfStream;
+            Result.Type = Token_EndOfStream;
         } break;
 
         case '{':
         {
-            Result = Token_BeginGroup;
+            Result.Type = Token_BeginGroup;
             ++Parser->At;
         } break;
 
         case '}':
         {
-            Result = Token_EndGroup;
+            Result.Type = Token_EndGroup;
             ++Parser->At;
         } break;
 
         case ',':
         {
-            Result = Token_Comma;
+            Result.Type = Token_Comma;
             ++Parser->At;
         } break;
 
         case '<':
         {
-            Result = Token_Garbage;
+            Result.Type = Token_Garbage;
             ++Parser->At;
             while(Parser->At[0] && (Parser->At[0] != '>'))
             {
@@ -98,6 +104,10 @@ GetToken(parser *Parser)
                 {
                     ++Parser->At;
                     Assert(Parser->At[0]);
+                }
+                else
+                {
+                    ++Result.GarbageCharCount;
                 }
                 ++Parser->At;
             }
@@ -112,10 +122,16 @@ GetToken(parser *Parser)
     return(Result);
 }
 
-internal u32
-FindScore(char *Input)
+struct parsed_result
 {
-    u32 Result = 0;
+    u32 Score;
+    u32 GarbageCharCount;
+};
+
+internal parsed_result
+ParseInput(char *Input)
+{
+    parsed_result Result = {};
     parser Parser;
     Parser.At = Input;
     b32 Finished = false;
@@ -123,7 +139,7 @@ FindScore(char *Input)
     while(!Finished)
     {
         token Token = GetToken(&Parser);
-        switch(Token)
+        switch(Token.Type)
         {
             case Token_BeginGroup:
             {
@@ -132,13 +148,13 @@ FindScore(char *Input)
 
             case Token_EndGroup:
             {
-                Result += Depth;
+                Result.Score += Depth;
                 --Depth;
             } break;
 
             case Token_Garbage:
             {
-                // NOTE(slava): Nothing to do
+                Result.GarbageCharCount += Token.GarbageCharCount;
             } break;
 
             case Token_Comma:
@@ -158,26 +174,27 @@ FindScore(char *Input)
 }
 
 internal void
-TestFindScore(char *Input, u32 ExpectedScore)
+TestParseInput(char *Input, u32 ExpectedScore, u32 ExpectedGarbageCharCount)
 {
-    u32 Score = FindScore(Input);
-    Assert(Score == ExpectedScore);
+    parsed_result Result = ParseInput(Input);
+    Assert(Result.Score == ExpectedScore);
+    Assert(Result.GarbageCharCount == ExpectedGarbageCharCount);
 }
 
 int
 main(void)
 {
-    TestFindScore("{}", 1);
-    TestFindScore("{{{}}}", 6);
-    TestFindScore("{{},{}}", 5);
-    TestFindScore("{{{},{},{{}}}}", 16);
-    TestFindScore("{<a>,<a>,<a>,<a>}", 1);
-    TestFindScore("{{<ab>},{<ab>},{<ab>},{<ab>}}", 9);
-    TestFindScore("{{<!!>},{<!!>},{<!!>},{<!!>}}", 9);
-    TestFindScore("{{<a!>},{<a!>},{<a!>},{<ab>}}", 3);
+    TestParseInput("{}", 1, 0);
+    TestParseInput("{{{}}}", 6, 0);
+    TestParseInput("{{},{}}", 5, 0);
+    TestParseInput("{{{},{},{{}}}}", 16, 0);
+    TestParseInput("{<a>,<a>,<a>,<a>}", 1, 4);
+    TestParseInput("{{<ab>},{<ab>},{<ab>},{<ab>}}", 9, 8);
+    TestParseInput("{{<!!>},{<!!>},{<!!>},{<!!>}}", 9, 0);
+    TestParseInput("{{<a!>},{<a!>},{<a!>},{<ab>}}", 3, 17);
 
     char *Input = ReadEntireFileAndNullTerminate("input.txt");
-    TestFindScore(Input, 13154);
+    TestParseInput(Input, 13154, 6369);
 
     return(0);
 }
