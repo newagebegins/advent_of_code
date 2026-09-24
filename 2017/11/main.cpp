@@ -33,13 +33,6 @@ struct v3i
     s32 x, y, z;
 };
 
-inline v3i
-V3i(s32 X, s32 Y, s32 Z)
-{
-    v3i Result = {X, Y, Z};
-    return(Result);
-}
-
 inline b32
 operator==(v3i A, v3i B)
 {
@@ -68,8 +61,8 @@ AbsoluteValue(s32 X)
    z = y - x
  */
 
-internal u32
-GetDistanceFromOrigin(v3i P)
+inline v3i
+ToFewestSteps(v3i P)
 {
     while((P.x > 0) && (P.z > 0))
     {
@@ -107,6 +100,12 @@ GetDistanceFromOrigin(v3i P)
         --P.x;
         --P.z;
     }
+    return(P);
+}
+
+inline u32
+GetDistanceFromOrigin(v3i P)
+{
     u32 Result = AbsoluteValue(P.x) + AbsoluteValue(P.y) + AbsoluteValue(P.z);
     return(Result);
 }
@@ -216,45 +215,52 @@ GetToken(parser *Parser)
     return(Result);
 }
 
-internal v3i
-FindFinalPositionFromPath(char *Path)
+struct parsed_path
 {
-    v3i Result = {};
+    u32 FinalDistance;
+    u32 FurthestDistance;
+};
+
+internal parsed_path
+ParsePath(char *Path)
+{
+    parsed_path Result = {};
     parser Parser;
     Parser.At = Path;
     token Token;
+    v3i P = {};
     while((Token = GetToken(&Parser)) != Token_EndOfFile)
     {
         switch(Token)
         {
             case Token_SouthEast:
             {
-                ++Result.x;
+                ++P.x;
             } break;
 
             case Token_NorthEast:
             {
-                ++Result.y;
+                ++P.y;
             } break;
 
             case Token_North:
             {
-                ++Result.z;
+                ++P.z;
             } break;
 
             case Token_NorthWest:
             {
-                --Result.x;
+                --P.x;
             } break;
 
             case Token_SouthWest:
             {
-                --Result.y;
+                --P.y;
             } break;
 
             case Token_South:
             {
-                --Result.z;
+                --P.z;
             } break;
 
             case Token_Comma:
@@ -264,29 +270,35 @@ FindFinalPositionFromPath(char *Path)
 
             InvalidDefaultCase;
         }
+
+        P = ToFewestSteps(P);
+        Result.FinalDistance = GetDistanceFromOrigin(P);
+        if(Result.FurthestDistance < Result.FinalDistance)
+        {
+            Result.FurthestDistance = Result.FinalDistance;
+        }
     }
     return(Result);
 }
 
 internal void
-Test(char *Path, v3i ExpectedFinalP, u32 ExpectedDistance)
+Test(char *Path, u32 ExpectedFinalDistance, u32 ExpectedFurthestDistance)
 {
-    v3i FinalP = FindFinalPositionFromPath(Path);
-    Assert(FinalP == ExpectedFinalP);
-    u32 Distance = GetDistanceFromOrigin(FinalP);
-    Assert(Distance == ExpectedDistance);
+    parsed_path ParsedPath = ParsePath(Path);
+    Assert(ParsedPath.FinalDistance == ExpectedFinalDistance);
+    Assert(ParsedPath.FurthestDistance == ExpectedFurthestDistance);
 }
 
 int
 main(void)
 {
-    Test("ne,ne,ne", V3i(0, 3, 0), 3);
-    Test("ne,ne,sw,sw", V3i(0, 0, 0), 0);
-    Test("ne,ne,s,s", V3i(0, 2, -2), 2);
-    Test("se,sw,se,sw,sw", V3i(2, -3, 0), 3);
+    Test("ne,ne,ne", 3, 3);
+    Test("ne,ne,sw,sw", 0, 2);
+    Test("ne,ne,s,s", 2, 2);
+    Test("se,sw,se,sw,sw", 3, 3);
 
     char *Path = ReadEntireFileAndNullTerminate("input.txt");
-    Test(Path, V3i(-79, -405, -403), 808);
+    Test(Path, 808, 1556);
 
     return(0);
 }
