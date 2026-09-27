@@ -68,6 +68,61 @@ CountProgramsConnectedTo0(connection_list *ConnectionLists)
     return(Result);
 }
 
+static void
+VisitProgramsConnectedTo(connection_list *ConnectionLists, uint8_t *Visited, program_id StartID)
+{
+    static program_id ToVisit[MAX_PROGRAM_COUNT];
+    ToVisit[0] = StartID;
+    uint32_t ToVisitCount = 1;
+
+    while(ToVisitCount)
+    {
+        program_id ProgramID = ToVisit[--ToVisitCount];
+        if(!Visited[ProgramID])
+        {
+            Visited[ProgramID] = true;
+            connection_list *ConnectionList = ConnectionLists + ProgramID;
+            for(uint8_t IDIndex = 0;
+                IDIndex < ConnectionList->Count;
+                ++IDIndex)
+            {
+                program_id ConnectedID = ConnectionList->IDs[IDIndex];
+                if(!Visited[ConnectedID])
+                {
+                    ToVisit[ToVisitCount++] = ConnectedID;
+                }
+            }
+        }
+    }
+}
+
+static uint32_t
+CountConnectedGroups(connection_list *ConnectionLists, uint32_t ProgramCount)
+{
+    uint32_t Result = 0;
+
+    static uint8_t Visited[MAX_PROGRAM_COUNT];
+    for(program_id ProgramID = 0;
+        ProgramID < ProgramCount;
+        ++ProgramID)
+    {
+        Visited[ProgramID] = false;
+    }
+
+    for(program_id ProgramID = 0;
+        ProgramID < ProgramCount;
+        ++ProgramID)
+    {
+        if(!Visited[ProgramID])
+        {
+            ++Result;
+            VisitProgramsConnectedTo(ConnectionLists, Visited, ProgramID);
+        }
+    }
+
+    return(Result);
+}
+
 struct parser
 {
     char *At;
@@ -134,15 +189,17 @@ SkipWhitespace(parser *Parser)
     }
 }
 
-static void
+static uint32_t
 ParseInput(char *Input, connection_list *ConnectionLists)
 {
+    uint32_t ProgramCount = 0;
     parser Parser;
     Parser.At = Input;
     while(Parser.At[0])
     {
         program_id ID = ParseProgramID(&Parser);
         Assert(ID < MAX_PROGRAM_COUNT);
+        ++ProgramCount;
         connection_list *ConnectionList = ConnectionLists + ID;
         ConnectionList->Count = 0;
         SkipString(&Parser, " <-> ");
@@ -163,25 +220,31 @@ ParseInput(char *Input, connection_list *ConnectionLists)
             }
         }
     }
+    Assert(ProgramCount <= MAX_PROGRAM_COUNT);
+    return(ProgramCount);
 }
 
 static void
-TestCountProgramsConnectedTo0(char *Filename, uint32_t ExpectedCount)
+TestCountProgramsConnectedTo0(char *Filename, uint32_t ExpectedCount0, uint32_t ExpectedGroupCount)
 {
     static char Input[40000];
     ReadEntireFileAndNullTerminate(Input, sizeof(Input), Filename);
 
     static connection_list ConnectionLists[MAX_PROGRAM_COUNT];
-    ParseInput(Input, ConnectionLists);
-    uint32_t Count = CountProgramsConnectedTo0(ConnectionLists);
-    Assert(Count == ExpectedCount);
+    uint32_t ProgramCount = ParseInput(Input, ConnectionLists);
+
+    uint32_t Count0 = CountProgramsConnectedTo0(ConnectionLists);
+    Assert(Count0 == ExpectedCount0);
+
+    uint32_t GroupCount = CountConnectedGroups(ConnectionLists, ProgramCount);
+    Assert(GroupCount == ExpectedGroupCount);
 }
 
 int
 main(void)
 {
-    TestCountProgramsConnectedTo0("test_input.txt", 6);
-    TestCountProgramsConnectedTo0("input.txt", 175);
+    TestCountProgramsConnectedTo0("test_input.txt", 6, 2);
+    TestCountProgramsConnectedTo0("input.txt", 175, 213);
 
     return(0);
 }
