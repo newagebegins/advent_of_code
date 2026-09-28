@@ -146,8 +146,43 @@ FindTripSeverity(u32 LayerCount, layer *Layers)
     return(Result);
 }
 
+internal b32
+IsCaughtWithDelay(u32 Delay, u32 LayerCount, layer *Layers)
+{
+    b32 Result = false;
+    for(u32 LayerIndex = 0;
+        LayerIndex < LayerCount;
+        ++LayerIndex)
+    {
+        layer Layer = Layers[LayerIndex];
+        u32 Period = 2*(Layer.Range - 1);
+        if(((Layer.Depth + Delay) % Period) == 0)
+        {
+            Result = true;
+            break;
+        }
+    }
+    return(Result);
+}
+
+internal u32
+FindMinDelayToAvoidBeingCaught(u32 LayerCount, layer *Layers)
+{
+    u32 Delay = 0;
+    for(;
+        ;
+        ++Delay)
+    {
+        if(!IsCaughtWithDelay(Delay, LayerCount, Layers))
+        {
+            break;
+        }
+    }
+    return(Delay);
+}
+
 internal void
-TestFindSeverity(char *FileName, u32 ExpectedSeverity)
+Test(char *FileName, u32 ExpectedSeverity, u32 ExpectedMinDelay)
 {
     local_persist char Input[512];
     ReadEntireFileAndNullTerminate(FileName, sizeof(Input), Input);
@@ -155,12 +190,14 @@ TestFindSeverity(char *FileName, u32 ExpectedSeverity)
     u32 LayerCount = ParseInput(Input, ArrayCount(Layers), Layers);
     u32 Severity = FindTripSeverity(LayerCount, Layers);
     Assert(Severity == ExpectedSeverity);
+    u32 MinDelay = FindMinDelayToAvoidBeingCaught(LayerCount, Layers);
+    Assert(MinDelay == ExpectedMinDelay);
 }
 
 int
 main(void)
 {
-    TestFindSeverity("test_input.txt", 24);
-    TestFindSeverity("input.txt", 2604);
+    Test("test_input.txt", 24, 10);
+    Test("input.txt", 2604, 3941460);
     return(0);
 }
