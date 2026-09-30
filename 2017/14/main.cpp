@@ -6,6 +6,7 @@ typedef int32_t s32;
 typedef int32_t b32;
 
 #define internal static
+#define local_persist static
 #define ArrayCount(A) (sizeof(A)/sizeof((A)[0]))
 #define Assert(C) if(!(C)) {*(int *)0 = 0;}
 
@@ -219,6 +220,123 @@ CountUsedSquares(char *KeyString)
     return(Result);
 }
 
+struct grid
+{
+    u8 Squares[128][128];
+};
+
+internal void
+FillGrid(char *KeyString, grid *Grid)
+{
+    char StringToHash[32];
+    u8 DenseHash[16];
+    string_builder Builder;
+    for(u32 Row = 0;
+        Row < 128;
+        ++Row)
+    {
+        InitializeStringBuilder(&Builder, sizeof(StringToHash), StringToHash);
+        AppendString(&Builder, KeyString);
+        AppendChar(&Builder, '-');
+        AppendU32(&Builder, Row);
+        NullTerminate(&Builder);
+        KnotHash(StringToHash, DenseHash);
+        u32 Col = 0;
+        for(u32 ByteIndex = 0;
+            ByteIndex < ArrayCount(DenseHash);
+            ++ByteIndex)
+        {
+            u8 Byte = DenseHash[ByteIndex];
+            for(s32 Shift = 7;
+                Shift >= 0;
+                --Shift, ++Col)
+            {
+                Grid->Squares[Row][Col] = ((Byte >> Shift) & 1);
+            }
+        }
+    }
+}
+
+struct v2i
+{
+    s32 x, y;
+};
+
+internal void
+VisitRegion(grid *Grid, grid *Visited, u32 StartRow, u32 StartCol)
+{
+    local_persist v2i ToVisit[128];
+    ToVisit[0] = {(s32)StartCol, (s32)StartRow};
+    u32 ToVisitCount = 1;
+    v2i Directions[] =
+    {
+        {1, 0},
+        {-1, 0},
+        {0, 1},
+        {0, -1},
+    };
+    while(ToVisitCount)
+    {
+        --ToVisitCount;
+        s32 Row = ToVisit[ToVisitCount].y;
+        s32 Col = ToVisit[ToVisitCount].x;
+        if(!Visited->Squares[Row][Col])
+        {
+            Visited->Squares[Row][Col] = true;
+            for(u32 DirectionIndex = 0;
+                DirectionIndex < ArrayCount(Directions);
+                ++DirectionIndex)
+            {
+                v2i Direction = Directions[DirectionIndex];
+                s32 NewRow = Row + Direction.y;
+                s32 NewCol = Col + Direction.x;
+                if((NewRow >= 0) && (NewRow < 128) &&
+                   (NewCol >= 0) && (NewCol < 128) &&
+                   !Visited->Squares[NewRow][NewCol] &&
+                   Grid->Squares[NewRow][NewCol])
+                {
+                    Assert(ToVisitCount < ArrayCount(ToVisit));
+                    ToVisit[ToVisitCount++] = {NewCol, NewRow};
+                }
+            }
+        }
+    }
+}
+
+internal u32
+CountRegions(grid *Grid)
+{
+    u32 Result = 0;
+    local_persist grid Visited;
+    for(u32 Row = 0;
+        Row < 128;
+        ++Row)
+    {
+        for(u32 Col = 0;
+            Col < 128;
+            ++Col)
+        {
+            Visited.Squares[Row][Col] = false;
+        }
+    }
+    for(u32 Row = 0;
+        Row < 128;
+        ++Row)
+    {
+        for(u32 Col = 0;
+            Col < 128;
+            ++Col)
+        {
+            if(!Visited.Squares[Row][Col] && Grid->Squares[Row][Col])
+            {
+                ++Result;
+                VisitRegion(Grid, &Visited, Row, Col);
+            }
+        }
+    }
+    return(Result);
+}
+
 internal void
 TestCountUsedSquares(char *KeyString, u32 ExpectedCount)
 {
@@ -226,11 +344,30 @@ TestCountUsedSquares(char *KeyString, u32 ExpectedCount)
     Assert(Count == ExpectedCount);
 }
 
+internal void
+TestCountRegions(char *KeyString, u32 ExpectedCount)
+{
+    local_persist grid Grid;
+    FillGrid(KeyString, &Grid);
+    u32 Count = CountRegions(&Grid);
+    Assert(Count == ExpectedCount);
+}
+
 int
 main(void)
 {
-    TestCountUsedSquares("flqrgnkx", 8108);
-    TestCountUsedSquares("ffayrhll", 8190);
+    char *TestInput = "flqrgnkx";
+    char *PuzzleInput = "ffayrhll";
+
+    // NOTE(slava): Part 1
+
+    TestCountUsedSquares(TestInput, 8108);
+    TestCountUsedSquares(PuzzleInput, 8190);
+
+    // NOTE(slava): Part 2
+
+    TestCountRegions(TestInput, 1242);
+    TestCountRegions(PuzzleInput, 1134);
 
     return(0);
 }
