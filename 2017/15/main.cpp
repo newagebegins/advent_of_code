@@ -48,17 +48,57 @@ CountMatchingPairs(u32 StartA, u32 StartB)
     return(Result);
 }
 
+inline u32
+PickValue(generator *Generator, u32 Mask)
+{
+    u32 Result;
+    for(;;)
+    {
+        u32 Value = GenerateValue(Generator);
+        if((Value & Mask) == 0)
+        {
+            Result = Value;
+            break;
+        }
+    }
+    return(Result);
+}
+
+internal u32
+CountMatchingPairs2(u32 StartA, u32 StartB)
+{
+    u32 Result = 0;
+    generator GeneratorA, GeneratorB;
+    InitializeGenerator(&GeneratorA, StartA, 16807);
+    InitializeGenerator(&GeneratorB, StartB, 48271);
+    for(u32 Iteration = 0;
+        Iteration < 5000000;
+        ++Iteration)
+    {
+        u32 ValueA = PickValue(&GeneratorA, 4 - 1);
+        u32 ValueB = PickValue(&GeneratorB, 8 - 1);
+        if((ValueA & 0xFFFF) == (ValueB & 0xFFFF))
+        {
+            ++Result;
+        }
+    }
+    return(Result);
+}
+
 internal void
-Test(u32 StartA, u32 StartB, u32 ExpectedCount)
+Test(u32 StartA, u32 StartB, u32 ExpectedCount, u32 ExpectedCount2)
 {
     u32 Count = CountMatchingPairs(StartA, StartB);
     Assert(Count == ExpectedCount);
+
+    u32 Count2 = CountMatchingPairs2(StartA, StartB);
+    Assert(Count2 == ExpectedCount2);
 }
 
 int
 main(void)
 {
-    Test(65, 8921, 588);
-    Test(591, 393, 619);
+    Test(65, 8921, 588, 309);
+    Test(591, 393, 619, 290);
     return(0);
 }
