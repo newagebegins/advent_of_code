@@ -62,6 +62,23 @@ InOrder(programs *Programs, char *ExpectedOrder)
     return(Result);
 }
 
+internal b32
+InOrder(char *Buffer, char *ExpectedOrder)
+{
+    b32 Result = true;
+    for(u8 ProgramIndex = 0;
+        ProgramIndex < 16;
+        ++ProgramIndex)
+    {
+        if(Buffer[ProgramIndex] != ExpectedOrder[ProgramIndex])
+        {
+            Result = false;
+            break;
+        }
+    }
+    return(Result);
+}
+
 internal void
 Spin(programs *Programs, u32 SpinSize)
 {
@@ -299,6 +316,137 @@ Dance(programs *Programs, char *Input)
     }
 }
 
+struct compressed_dance
+{
+    u8 Shuffle[16];
+    char Rename[16];
+};
+
+internal compressed_dance
+CompressDance(char *Input)
+{
+    compressed_dance Result;
+
+    u8 *Shuffle = Result.Shuffle;
+    char *Rename = Result.Rename;
+
+    for(u8 Index = 0;
+        Index < 16;
+        ++Index)
+    {
+        Shuffle[Index] = Index;
+    }
+
+    for(u8 Index = 0;
+        Index < 16;
+        ++Index)
+    {
+        Rename[Index] = 'a' + Index;
+    }
+
+    tokenizer Tokenizer;
+    InitializeTokenizer(&Tokenizer, Input);
+
+    b32 Finished = false;
+
+    while(!Finished)
+    {
+        token Token = GetToken(&Tokenizer);
+
+        switch(Token.Type)
+        {
+            case Token_Spin:
+            {
+                u8 Temp[16];
+                for(u32 Index = 0;
+                    Index < 16;
+                    ++Index)
+                {
+                    Temp[Index] = Shuffle[Index];
+                }
+                u8 SpinSize = Token.Args[0];
+                for(u32 Index = 0;
+                    Index < SpinSize;
+                    ++Index)
+                {
+                    Shuffle[Index] = Temp[16 - SpinSize + Index];
+                }
+                for(u32 Index = SpinSize;
+                    Index < 16;
+                    ++Index)
+                {
+                    Shuffle[Index] = Temp[Index - SpinSize];
+                }
+            } break;
+
+            case Token_Exchange:
+            {
+                u8 Temp = Shuffle[Token.Args[0]];
+                Shuffle[Token.Args[0]] = Shuffle[Token.Args[1]];
+                Shuffle[Token.Args[1]] = Temp;
+            } break;
+
+            case Token_Partner:
+            {
+                for(u32 Index = 0;
+                    Index < 16;
+                    ++Index)
+                {
+                    if(Rename[Index] == Token.Args[0])
+                    {
+                        Rename[Index] = Token.Args[1];
+                    }
+                    else if(Rename[Index] == Token.Args[1])
+                    {
+                        Rename[Index] = Token.Args[0];
+                    }
+                }
+            } break;
+
+            case Token_Comma:
+            {
+                // NOTE(slava): Do nothing
+            } break;
+
+            case Token_EndOfFile:
+            {
+                Finished = true;
+            } break;
+
+            InvalidDefaultCase;
+        }
+    }
+
+    return(Result);
+}
+
+internal void
+PerformDance(compressed_dance *CompressedDance, char *Programs)
+{
+    char Copy[16];
+
+    for(u32 Index = 0;
+        Index < 16;
+        ++Index)
+    {
+        Copy[Index] = Programs[Index];
+    }
+
+    for(u32 Index = 0;
+        Index < 16;
+        ++Index)
+    {
+        Programs[Index] = Copy[CompressedDance->Shuffle[Index]];
+    }
+
+    for(u32 Index = 0;
+        Index < 16;
+        ++Index)
+    {
+        Programs[Index] = CompressedDance->Rename[Programs[Index] - 'a'];
+    }
+}
+
 int
 main(void)
 {
@@ -323,6 +471,20 @@ main(void)
 
         Dance(&Programs, Input);
         Assert(InOrder(&Programs, "eojfmbpkldghncia"));
+
+        // NOTE(slava): Part 2
+
+        char Progs[] = "abcdefghijklmnop";
+        compressed_dance CompressedDance = CompressDance(Input);
+
+        for(u32 DanceIndex = 0;
+            DanceIndex < 1000000000;
+            ++DanceIndex)
+        {
+            PerformDance(&CompressedDance, Progs);
+        }
+
+        Assert(InOrder(Progs, "iecopnahgdflmkjb"));
     }
 
     return(0);
