@@ -477,8 +477,24 @@ main(void)
         char Progs[] = "abcdefghijklmnop";
         compressed_dance CompressedDance = CompressDance(Input);
 
+        u32 DanceCount = 1000000000;
+        u32 Period = 0;
+
         for(u32 DanceIndex = 0;
-            DanceIndex < 1000000000;
+            DanceIndex < DanceCount;
+            ++DanceIndex)
+        {
+            PerformDance(&CompressedDance, Progs);
+            if(InOrder(Progs, "abcdefghijklmnop"))
+            {
+                Period = DanceIndex + 1;
+                break;
+            }
+        }
+
+        u32 Remainder = DanceCount % Period;
+        for(u32 DanceIndex = 0;
+            DanceIndex < Remainder;
             ++DanceIndex)
         {
             PerformDance(&CompressedDance, Progs);
