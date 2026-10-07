@@ -40,13 +40,9 @@ GetU32(char *Input)
     return(Result);
 }
 
-int
-main(int ArgCount, char **Args)
+internal void
+SolvePart1(u32 StepsPerInsert)
 {
-    local_persist char Input[64];
-    ReadEntireFileAndNullTerminate((ArgCount > 1) ? Args[1] : "input.txt", Input, sizeof(Input));
-    u32 StepsPerInsert = GetU32(Input);
-
     local_persist u16 Buffer[2018];
     Buffer[0] = 0;
     u32 CurrentIndex = 0;
@@ -64,5 +60,35 @@ main(int ArgCount, char **Args)
         Buffer[CurrentIndex] = Value;
     }
     printf("%u\n", Buffer[CurrentIndex + 1]);
+}
+
+internal void
+SolvePart2(u32 StepsPerInsert)
+{
+    u32 LastValueAtIndex1 = 0;
+    u32 CurrentIndex = 0;
+    for(u32 Value = 1;
+        Value < 50000000;
+        ++Value)
+    {
+        CurrentIndex = ((CurrentIndex + StepsPerInsert) % Value) + 1;
+        if(CurrentIndex == 1)
+        {
+            LastValueAtIndex1 = Value;
+        }
+    }
+    printf("%u\n", LastValueAtIndex1);
+}
+
+int
+main(int ArgCount, char **Args)
+{
+    local_persist char Input[64];
+    ReadEntireFileAndNullTerminate((ArgCount > 1) ? Args[1] : "input.txt", Input, sizeof(Input));
+    u32 StepsPerInsert = GetU32(Input);
+
+    SolvePart1(StepsPerInsert);
+    SolvePart2(StepsPerInsert);
+
     return(0);
 }
