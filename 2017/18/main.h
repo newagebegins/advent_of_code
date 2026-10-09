@@ -16,12 +16,6 @@ typedef int32_t b32;
 #define Assert assert
 #define InvalidDefaultCase default: { Assert(!"Invalid default case"); } break
 
-enum run_result
-{
-    RunResult_Success,
-    RunResult_Overflow,
-};
-
 typedef int64_t register_value;
 
 #define MAX_REGISTER_VALUE INT64_MAX
@@ -89,13 +83,34 @@ struct instruction
     instruction_arg Args[2];
 };
 
-struct state
+struct queue
+{
+    register_value Values[128];
+    u32 BeginIndex;
+    u32 EndIndex;
+};
+
+enum program_state
+{
+    ProgramState_Running,
+    ProgramState_Waiting,
+    ProgramState_Overflow,
+    ProgramState_InvalidInstructionIndex,
+};
+
+struct program
 {
     register_value Registers[26];
     register_value InstructionIndex;
-    register_value LastPlayedFrequency;
-    b32 Recovered;
-    register_value FirstRecoveredFrequency;
+
+    register_value InstructionCount;
+    instruction *Instructions;
+
+    program_state State;
+    u32 ID;
+    queue *SndQueue;
+    queue *RcvQueue;
+    u32 SendCount;
 };
 
 struct str

@@ -86,15 +86,15 @@ MulOverflows(register_value A, register_value B)
 }
 
 inline register_value
-GetArgValue(state *State, instruction_arg Arg)
+GetArgValue(program *Program, instruction_arg Arg)
 {
     register_value Result = {};
     switch(Arg.Type)
     {
         case InstructionArg_Register:
         {
-            Assert(Arg.RegisterIndex < ArrayCount(State->Registers));
-            Result = State->Registers[Arg.RegisterIndex];
+            Assert(Arg.RegisterIndex < ArrayCount(Program->Registers));
+            Result = Program->Registers[Arg.RegisterIndex];
         } break;
 
         case InstructionArg_Constant:
@@ -107,117 +107,272 @@ GetArgValue(state *State, instruction_arg Arg)
     return(Result);
 }
 
-static run_result
-RunInstructions(state *State, register_value InstructionCount, instruction *Instructions)
+inline b32
+IsEmpty(queue *Queue)
 {
-    run_result Result = RunResult_Success;
+    b32 Result = (Queue->BeginIndex == Queue->EndIndex);
+    return(Result);
+}
 
-    while((Result == RunResult_Success) &&
-          (State->InstructionIndex >= 0) &&
-          (State->InstructionIndex < InstructionCount) &&
-          !State->Recovered)
+inline b32
+IsFull(queue *Queue)
+{
+    b32 Result = (((Queue->EndIndex + 1) % ArrayCount(Queue->Values)) == Queue->BeginIndex);
+    return(Result);
+}
+
+static void
+Push(queue *Queue, register_value Value)
+{
+    Assert(Queue->EndIndex < ArrayCount(Queue->Values));
+    Queue->Values[Queue->EndIndex++] = Value;
+    if(Queue->EndIndex == ArrayCount(Queue->Values))
     {
-        instruction Instruction = Instructions[State->InstructionIndex];
-        b32 Jumped = false;
+        Queue->EndIndex = 0;
+    }
+    Assert(Queue->EndIndex != Queue->BeginIndex);
+}
+
+static register_value
+PopFront(queue *Queue)
+{
+    Assert(!IsEmpty(Queue));
+    Assert(Queue->BeginIndex < ArrayCount(Queue->Values));
+    register_value Result = Queue->Values[Queue->BeginIndex++];
+    if(Queue->BeginIndex == ArrayCount(Queue->Values))
+    {
+        Queue->BeginIndex = 0;
+    }
+    return(Result);
+}
+
+static register_value
+PopBack(queue *Queue)
+{
+    Assert(!IsEmpty(Queue));
+    if(Queue->EndIndex == 0)
+    {
+        Queue->EndIndex = ArrayCount(Queue->Values) - 1;
+    }
+    else
+    {
+        --Queue->EndIndex;
+    }
+    register_value Result = Queue->Values[Queue->EndIndex];
+    return(Result);
+}
+
+static void
+RunInstruction(program *Program, b32 Part1)
+{
+    if((Program->State == ProgramState_Running) ||
+       (Program->State == ProgramState_Waiting))
+    {
+        instruction Instruction = Program->Instructions[Program->InstructionIndex];
+        b32 GoToNextInstruction = true;
 
         switch(Instruction.Type)
         {
             case Instruction_snd:
             {
-                State->LastPlayedFrequency = GetArgValue(State, Instruction.Args[0]);
+                register_value Val = GetArgValue(Program, Instruction.Args[0]);
+                Push(Program->SndQueue, Val);
+                ++Program->SendCount;
             } break;
 
             case Instruction_set:
             {
                 Assert(Instruction.Args[0].Type == InstructionArg_Register);
-                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(State->Registers));
-                State->Registers[Instruction.Args[0].RegisterIndex] = GetArgValue(State, Instruction.Args[1]);
+                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(Program->Registers));
+                Program->Registers[Instruction.Args[0].RegisterIndex] = GetArgValue(Program, Instruction.Args[1]);
             } break;
 
             case Instruction_add:
             {
                 Assert(Instruction.Args[0].Type == InstructionArg_Register);
-                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(State->Registers));
-                register_value CurrentValue = State->Registers[Instruction.Args[0].RegisterIndex];
-                register_value Addend = GetArgValue(State, Instruction.Args[1]);
+                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(Program->Registers));
+                register_value CurrentValue = Program->Registers[Instruction.Args[0].RegisterIndex];
+                register_value Addend = GetArgValue(Program, Instruction.Args[1]);
                 if(AddOverflows(CurrentValue, Addend))
                 {
-                    Result = RunResult_Overflow;
+                    Program->State = ProgramState_Overflow;
+                    GoToNextInstruction = false;
                 }
                 else
                 {
-                    State->Registers[Instruction.Args[0].RegisterIndex] = CurrentValue + Addend;
+                    Program->Registers[Instruction.Args[0].RegisterIndex] = CurrentValue + Addend;
                 }
             } break;
 
             case Instruction_mul:
             {
                 Assert(Instruction.Args[0].Type == InstructionArg_Register);
-                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(State->Registers));
-                register_value CurrentValue = State->Registers[Instruction.Args[0].RegisterIndex];
-                register_value Factor = GetArgValue(State, Instruction.Args[1]);
+                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(Program->Registers));
+                register_value CurrentValue = Program->Registers[Instruction.Args[0].RegisterIndex];
+                register_value Factor = GetArgValue(Program, Instruction.Args[1]);
                 if(MulOverflows(CurrentValue, Factor))
                 {
-                    Result = RunResult_Overflow;
+                    Program->State = ProgramState_Overflow;
+                    GoToNextInstruction = false;
                 }
                 else
                 {
-                    State->Registers[Instruction.Args[0].RegisterIndex] = CurrentValue * Factor;
+                    Program->Registers[Instruction.Args[0].RegisterIndex] = CurrentValue * Factor;
                 }
             } break;
 
             case Instruction_mod:
             {
                 Assert(Instruction.Args[0].Type == InstructionArg_Register);
-                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(State->Registers));
-                register_value X = State->Registers[Instruction.Args[0].RegisterIndex];
-                register_value Y = GetArgValue(State, Instruction.Args[1]);
+                Assert(Instruction.Args[0].RegisterIndex < ArrayCount(Program->Registers));
+                register_value X = Program->Registers[Instruction.Args[0].RegisterIndex];
+                register_value Y = GetArgValue(Program, Instruction.Args[1]);
                 register_value Remainder = X % Y;
                 Assert(Remainder >= 0);
-                State->Registers[Instruction.Args[0].RegisterIndex] = Remainder;
+                Program->Registers[Instruction.Args[0].RegisterIndex] = Remainder;
             } break;
 
             case Instruction_rcv:
             {
-                register_value X = GetArgValue(State, Instruction.Args[0]);
-                if(X)
+                if(Part1)
                 {
-                    if(!State->Recovered)
+                    register_value X = GetArgValue(Program, Instruction.Args[0]);
+                    if(X)
                     {
-                        State->Recovered = true;
-                        State->FirstRecoveredFrequency = State->LastPlayedFrequency;
+                        Program->State = ProgramState_Waiting;
+                        GoToNextInstruction = false;
+                    }
+                }
+                else
+                {
+                    if(IsEmpty(Program->RcvQueue))
+                    {
+                        Program->State = ProgramState_Waiting;
+                        GoToNextInstruction = false;
+                    }
+                    else
+                    {
+                        Program->State = ProgramState_Running;
+                        register_value Val = PopFront(Program->RcvQueue);
+
+                        Assert(Instruction.Args[0].Type == InstructionArg_Register);
+                        Assert(Instruction.Args[0].RegisterIndex < ArrayCount(Program->Registers));
+                        Program->Registers[Instruction.Args[0].RegisterIndex] = Val;
                     }
                 }
             } break;
 
             case Instruction_jgz:
             {
-                register_value X = GetArgValue(State, Instruction.Args[0]);
+                register_value X = GetArgValue(Program, Instruction.Args[0]);
                 if(X > 0)
                 {
-                    register_value Y = GetArgValue(State, Instruction.Args[1]);
-                    if(AddOverflows(State->InstructionIndex, Y))
+                    register_value Y = GetArgValue(Program, Instruction.Args[1]);
+                    if(AddOverflows(Program->InstructionIndex, Y))
                     {
-                        Result = RunResult_Overflow;
+                        Program->State = ProgramState_Overflow;
                     }
                     else
                     {
-                        State->InstructionIndex += Y;
-                        Jumped = true;
+                        Program->InstructionIndex += Y;
                     }
+                    GoToNextInstruction = false;
                 }
             } break;
 
             InvalidDefaultCase;
         }
 
-        if(!Jumped)
+        if(GoToNextInstruction)
         {
-            ++State->InstructionIndex;
+            ++Program->InstructionIndex;
+        }
+
+        if((Program->InstructionIndex < 0) ||
+           (Program->InstructionIndex >= Program->InstructionCount))
+        {
+            Program->State = ProgramState_InvalidInstructionIndex;
+        }
+    }
+}
+
+static b32
+SolvePart1(parse_result ParseResult)
+{
+    b32 Success = true;
+
+    queue Queues[2] = {};
+
+    program Program = {};
+    Program.InstructionCount = ParseResult.InstructionCount;
+    Program.Instructions = ParseResult.Instructions;
+    Program.SndQueue = Queues + 0;
+    Program.RcvQueue = Queues + 1;
+
+    while(Program.State == ProgramState_Running)
+    {
+        RunInstruction(&Program, true);
+    }
+
+    if(Program.State == ProgramState_Overflow)
+    {
+        fprintf(stderr, "Overflow\n");
+        Success = false;
+    }
+    else
+    {
+        register_value Val = PopBack(Program.SndQueue);
+        printf("%I64d\n", Val);
+    }
+
+    return(Success);
+}
+
+static b32
+SolvePart2(parse_result ParseResult)
+{
+    b32 Success = true;
+
+    program Programs[2] = {};
+    queue Queues[2] = {};
+
+    for(u32 ProgramIndex = 0;
+        ProgramIndex < 2;
+        ++ProgramIndex)
+    {
+        program *Program = Programs + ProgramIndex;
+        Program->InstructionCount = ParseResult.InstructionCount;
+        Program->Instructions = ParseResult.Instructions;
+        Program->Registers['p' - 'a'] = ProgramIndex;
+        Program->ID = ProgramIndex;
+        Program->SndQueue = Queues + ProgramIndex;
+        Program->RcvQueue = Queues + !ProgramIndex;
+    }
+
+    while((Programs[0].State == ProgramState_Running) ||
+          (Programs[1].State == ProgramState_Running))
+    {
+        for(u32 ProgramIndex = 0;
+            ProgramIndex < ArrayCount(Programs);
+            ++ProgramIndex)
+        {
+            program *Program = Programs + ProgramIndex;
+            RunInstruction(Program, false);
         }
     }
 
-    return(Result);
+    if((Programs[0].State == ProgramState_Overflow) ||
+       (Programs[1].State == ProgramState_Overflow))
+    {
+        fprintf(stderr, "Overflow\n");
+        Success = false;
+    }
+    else
+    {
+        printf("%u\n", Programs[1].SendCount);
+    }
+
+    return(Success);
 }
 
 inline b32
@@ -494,22 +649,20 @@ main(int ArgCount, char **Args)
         parse_result ParseResult = ParseInstructions(Input);
         if(ParseResult.Instructions)
         {
-            state State = {};
-            run_result RunResult = RunInstructions(&State, ParseResult.InstructionCount, ParseResult.Instructions);
-            switch(RunResult)
+            if(SolvePart1(ParseResult))
             {
-                case RunResult_Success:
+                if(SolvePart2(ParseResult))
                 {
-                    printf("%I64d\n", State.FirstRecoveredFrequency);
-                } break;
-
-                case RunResult_Overflow:
+                    // NOTE(slava): Success!
+                }
+                else
                 {
-                    fprintf(stderr, "Overflow\n");
                     Error = true;
-                } break;
-
-                InvalidDefaultCase;
+                }
+            }
+            else
+            {
+                Error = true;
             }
         }
         else
