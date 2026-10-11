@@ -4,6 +4,7 @@
 
 typedef int32_t s32;
 typedef int32_t b32;
+typedef uint32_t u32;
 
 #define Assert(Condition) if(!(Condition)) { *(int *)0 = 0; }
 
@@ -83,7 +84,7 @@ PathExists(map Map, s32 X, s32 Y)
 }
 
 static void
-SolvePart1(char *Input)
+Solve(char *Input)
 {
     map Map = MakeMap(Input);
 
@@ -91,6 +92,8 @@ SolvePart1(char *Input)
     s32 Y = 0;
     s32 DirX = 0;
     s32 DirY = 1;
+
+    u32 StepCount = 0;
 
     for(;
         X < Map.Width;
@@ -118,6 +121,7 @@ SolvePart1(char *Input)
             case '+':
             {
                 // NOTE(slava): Change direction
+
                 if(DirX == 0)
                 {
                     DirY = 0;
@@ -149,11 +153,14 @@ SolvePart1(char *Input)
                         DirY = -1;
                     }
                 }
+
+                ++StepCount;
             } break;
 
             default:
             {
                 // NOTE(slava): Continue walking in the current direction
+
                 if((Cell >= 'A') && (Cell <= 'Z'))
                 {
                     printf("%c", Cell);
@@ -162,12 +169,15 @@ SolvePart1(char *Input)
                 {
                     Assert((Cell == '|') || (Cell == '-'));
                 }
+
                 X += DirX;
                 Y += DirY;
+                ++StepCount;
             } break;
         }
     }
     printf("\n");
+    printf("%u\n", StepCount);
 }
 
 int
@@ -181,7 +191,7 @@ main(int ArgCount, char **Args)
     char *Input = ReadEntireFileAndNullTerminate(InputFileName);
     if(Input)
     {
-        SolvePart1(Input);
+        Solve(Input);
         free(Input);
     }
     else
