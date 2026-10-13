@@ -36,6 +36,7 @@ struct v3
 
 struct particle
 {
+    b32 Collided;
     v3 P, V, A;
 };
 
@@ -139,6 +140,7 @@ ParseParticles(char *Input, u32 MaxParticleCount, particle *Particles)
     {
         Assert(ParticleCount < MaxParticleCount);
         particle *Particle = Particles + ParticleCount++;
+        Particle->Collided = false;
 
         SkipString(&Parser, "p=");
         Particle->P = ParseV3(&Parser);
@@ -216,6 +218,105 @@ FindParticleThatWillStayClosestToOriginInTheLongRun(u32 ParticleCount, particle 
     return(Result);
 }
 
+inline b32
+CanCollideInFuture(particle *A, particle *B)
+{
+    particle ARel;
+
+    ARel.P.x = A->P.x - B->P.x;
+    ARel.P.y = A->P.y - B->P.y;
+    ARel.P.z = A->P.z - B->P.z;
+
+    ARel.V.x = A->V.x - B->V.x;
+    ARel.V.y = A->V.y - B->V.y;
+    ARel.V.z = A->V.z - B->V.z;
+
+    ARel.A.x = A->A.x - B->A.x;
+    ARel.A.y = A->A.y - B->A.y;
+    ARel.A.z = A->A.z - B->A.z;
+
+    b32 Result = ParticleWillBeCloserToOrigin(&ARel);
+
+    return(Result);
+}
+
+internal u32
+CountParticlesAfterAllCollisionsAreResolved(u32 ParticleCount, particle *Particles)
+{
+    b32 Finished = false;
+
+    while(!Finished)
+    {
+        Finished = true;
+
+        for(u32 ParticleIndex1 = 0;
+            ParticleIndex1 < (ParticleCount - 1);
+            ++ParticleIndex1)
+        {
+            particle *Particle1 = Particles + ParticleIndex1;
+            if(!Particle1->Collided)
+            {
+                for(u32 ParticleIndex2 = ParticleIndex1 + 1;
+                    ParticleIndex2 < ParticleCount;
+                    ++ParticleIndex2)
+                {
+                    particle *Particle2 = Particles + ParticleIndex2;
+                    if(!Particle2->Collided)
+                    {
+                        if((Particle1->P.x == Particle2->P.x) &&
+                           (Particle1->P.y == Particle2->P.y) &&
+                           (Particle1->P.z == Particle2->P.z))
+                        {
+                            Particle1->Collided = true;
+                            Particle2->Collided = true;
+                        }
+                        else if(CanCollideInFuture(Particle1, Particle2))
+                        {
+                            Finished = false;
+                        }
+                    }
+                }
+            }
+        }
+
+        if(!Finished)
+        {
+            for(u32 ParticleIndex = 0;
+                ParticleIndex < ParticleCount;
+                ++ParticleIndex)
+            {
+                particle *Particle = Particles + ParticleIndex;
+
+                if(!Particle->Collided)
+                {
+                    Particle->V.x += Particle->A.x;
+                    Particle->V.y += Particle->A.y;
+                    Particle->V.z += Particle->A.z;
+
+                    Particle->P.x += Particle->V.x;
+                    Particle->P.y += Particle->V.y;
+                    Particle->P.z += Particle->V.z;
+                }
+            }
+        }
+    }
+
+    u32 Result = 0;
+
+    for(u32 ParticleIndex = 0;
+        ParticleIndex < ParticleCount;
+        ++ParticleIndex)
+    {
+        particle *Particle = Particles + ParticleIndex;
+        if(!Particle->Collided)
+        {
+            ++Result;
+        }
+    }
+
+    return(Result);
+}
+
 int
 main(int ArgCount, char **Args)
 {
@@ -225,10 +326,18 @@ main(int ArgCount, char **Args)
     ReadEntireFileAndNullTerminate(InputFileName, sizeof(Input), Input);
 
     local_persist particle Particles[1024];
-    u32 ParticleCount = ParseParticles(Input, ArrayCount(Particles), Particles);
 
-    u32 Particle = FindParticleThatWillStayClosestToOriginInTheLongRun(ParticleCount, Particles);
-    printf("%u\n", Particle);
+    {
+        u32 ParticleCount = ParseParticles(Input, ArrayCount(Particles), Particles);
+        u32 Particle = FindParticleThatWillStayClosestToOriginInTheLongRun(ParticleCount, Particles);
+        printf("%u\n", Particle);
+    }
+
+    {
+        u32 ParticleCount = ParseParticles(Input, ArrayCount(Particles), Particles);
+        u32 Count = CountParticlesAfterAllCollisionsAreResolved(ParticleCount, Particles);
+        printf("%u\n", Count);
+    }
 
     return(0);
 }
