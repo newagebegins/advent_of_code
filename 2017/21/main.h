@@ -3,10 +3,12 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <intrin.h>
 
 #define internal static
 #define local_persist static
 
+typedef uint64_t u64;
 typedef uint32_t u32;
 typedef uint16_t u16;
 typedef uint8_t u8;
@@ -41,12 +43,7 @@ struct conversion
 
 struct conversion_table
 {
-#if 0
-    pattern Patterns[16 + 512];
-#else    
-    u32 ConversionCount;
-    conversion Conversions[128];
-#endif
+    pattern Patterns[1024];
 };
 
 struct grid

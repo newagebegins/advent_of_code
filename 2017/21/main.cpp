@@ -45,7 +45,7 @@ HashSquare(u32 PixelsPerSquareSide, u32 Pitch, u8 *PixelsStart)
     }
     if(PixelsPerSquareSide == 2)
     {
-        Result |= (1 << 16);
+        Result |= (1 << 9);
     }
     else
     {
@@ -131,7 +131,6 @@ ParsePattern(parser *Parser)
     return(Result);
 }
 
-#if 0
 internal void
 SetConversion(conversion_table *Table, parsed_pattern PatternFrom, parsed_pattern PatternTo)
 {
@@ -139,7 +138,6 @@ SetConversion(conversion_table *Table, parsed_pattern PatternFrom, parsed_patter
     Assert(HashIndex < ArrayCount(Table->Patterns));
     Table->Patterns[HashIndex] = PatternTo.Pattern;
 }
-#endif
 
 internal parsed_pattern
 FlipX(parsed_pattern Pattern)
@@ -230,23 +228,14 @@ FillConversionTable(conversion_table *Table, char *Input)
     parser Parser;
     Parser.At = Input;
 
-    Table->ConversionCount = 0;
-
     SkipWhitespace(&Parser);
 
     while(Parser.At[0])
     {
-        Assert(Table->ConversionCount < ArrayCount(Table->Conversions));
-        conversion *Conversion = Table->Conversions + Table->ConversionCount++;
-
         parsed_pattern PatternFrom = ParsePattern(&Parser);
         SkipString(&Parser, " => ");
         parsed_pattern PatternTo = ParsePattern(&Parser);
 
-        Conversion->From = PatternFrom;
-        Conversion->To = PatternTo;
-
-#if 0
         SetConversion(Table, PatternFrom, PatternTo);
         PatternFrom = FlipX(PatternFrom);
         SetConversion(Table, PatternFrom, PatternTo);
@@ -262,118 +251,9 @@ FillConversionTable(conversion_table *Table, char *Input)
         SetConversion(Table, PatternFrom, PatternTo);
         PatternFrom = FlipY(PatternFrom);
         SetConversion(Table, PatternFrom, PatternTo);
-#endif
 
         SkipWhitespace(&Parser);
     }
-}
-
-internal parsed_pattern
-MakePattern(u32 PixelsPerSquareSide, u32 Pitch, u8 *Square)
-{
-    parsed_pattern Result;
-    Result.PixelsPerSide = PixelsPerSquareSide;
-
-    u8 *SrcRow = Square;
-    u8 *DstPixel = Result.Pattern.Pixels;
-
-    for(u32 Y = 0;
-        Y < PixelsPerSquareSide;
-        ++Y)
-    {
-        u8 *SrcPixel = SrcRow;
-        for(u32 X = 0;
-            X < PixelsPerSquareSide;
-            ++X)
-        {
-            *DstPixel++ = *SrcPixel++;
-        }
-        SrcRow += Pitch;
-    }
-
-    return(Result);
-}
-
-internal u32
-GetDerivedPatterns(u32 MaxCount, parsed_pattern *Patterns, parsed_pattern Base)
-{
-    u32 Count = 0;
-
-    parsed_pattern Pattern = Base;
-
-    Patterns[Count++] = Pattern;
-    Pattern = FlipX(Pattern);
-    Patterns[Count++] = Pattern;
-    Pattern = FlipY(Pattern);
-    Patterns[Count++] = Pattern;
-    Pattern = FlipX(Pattern);
-    Patterns[Count++] = Pattern;
-    Pattern = Rotate90(Pattern);
-    Patterns[Count++] = Pattern;
-    Pattern = FlipY(Pattern);
-    Patterns[Count++] = Pattern;
-    Pattern = FlipX(Pattern);
-    Patterns[Count++] = Pattern;
-    Pattern = FlipY(Pattern);
-    Patterns[Count++] = Pattern;
-
-    Assert(Count <= MaxCount);
-
-    return(Count);
-}
-
-internal b32
-PatternsAreEqual(parsed_pattern A, parsed_pattern B)
-{
-    b32 Result = false;
-    if(A.PixelsPerSide == B.PixelsPerSide)
-    {
-        Result = true;
-        u32 PixelCount = A.PixelsPerSide*A.PixelsPerSide;
-        for(u32 PixelIndex = 0;
-            PixelIndex < PixelCount;
-            ++PixelIndex)
-        {
-            if(A.Pattern.Pixels[PixelIndex] != B.Pattern.Pixels[PixelIndex])
-            {
-                Result = false;
-                break;
-            }
-        }
-    }
-    return(Result);
-}
-
-internal parsed_pattern
-FindConversion(conversion_table *Table, parsed_pattern PatternFrom)
-{
-    parsed_pattern Result = {};
-    u32 Found = false;
-    for(u32 ConversionIndex = 0;
-        (ConversionIndex < Table->ConversionCount) && !Found;
-        ++ConversionIndex)
-    {
-        conversion *Conversion = Table->Conversions + ConversionIndex;
-
-        parsed_pattern DerivedPatterns[8];
-        u32 DerivedPatternCount = GetDerivedPatterns(ArrayCount(DerivedPatterns), DerivedPatterns, PatternFrom);
-
-        for(u32 PatternIndex = 0;
-            PatternIndex < DerivedPatternCount;
-            ++PatternIndex)
-        {
-            Assert(PatternIndex < ArrayCount(DerivedPatterns));
-            parsed_pattern Pattern = DerivedPatterns[PatternIndex];
-            if(PatternsAreEqual(Conversion->From, Pattern))
-            {
-                Found = true;
-                Result = Conversion->To;
-                break;
-            }
-        }
-    }
-    Assert(Found);
-    return(Result);
 }
 
 internal void
@@ -381,15 +261,9 @@ ConvertSquare(conversion_table *Table,
               u32 SrcPixelsPerSquareSide, u32 SrcPitch, u8 *SrcSquare,
               u32 DstPixelsPerSquareSide, u32 DstPitch, u8 *DstSquare)
 {
-#if 0
     u16 SrcHash = HashSquare(SrcPixelsPerSquareSide, SrcPitch, SrcSquare);
     Assert(SrcHash < ArrayCount(Table->Patterns));
     pattern *Pattern = Table->Patterns + SrcHash;
-#else
-    parsed_pattern PatternFrom = MakePattern(SrcPixelsPerSquareSide, SrcPitch, SrcSquare);
-    parsed_pattern PatternTo = FindConversion(Table, PatternFrom);
-    pattern *Pattern = &PatternTo.Pattern;
-#endif
 
     u8 *Src = Pattern->Pixels;
     u8 *DstRow = DstSquare;
@@ -536,30 +410,6 @@ main(int ArgCount, char **Args)
         1,1,1,
     };
 
-#if 0
-    {
-        parsed_pattern Pattern;
-        Pattern.PixelsPerSide = 3;
-        Copy(sizeof(StartGrid), StartGrid, Pattern.Pattern.Pixels);
-
-        Print(&Pattern);
-        Pattern = FlipX(Pattern);
-        Print(&Pattern);
-        Pattern = FlipY(Pattern);
-        Print(&Pattern);
-        Pattern = FlipX(Pattern);
-        Print(&Pattern);
-        Pattern = Rotate90(Pattern);
-        Print(&Pattern);
-        Pattern = FlipY(Pattern);
-        Print(&Pattern);
-        Pattern = FlipX(Pattern);
-        Print(&Pattern);
-        Pattern = FlipY(Pattern);
-        Print(&Pattern);
-    }
-#endif
-
     local_persist grid Grids[2];
     Grids[0].PixelsPerSide = 3;
     Copy(sizeof(StartGrid), StartGrid, Grids[0].Pixels);
@@ -568,8 +418,7 @@ main(int ArgCount, char **Args)
     grid *Src = Grids + 0;
     grid *Dst = Grids + 1;
 
-    //Print(Src);
-
+    u64 BeginClock = __rdtsc();
     for(u32 Iteration = 0;
         Iteration < IterationCount;
         ++Iteration)
@@ -578,8 +427,8 @@ main(int ArgCount, char **Args)
         grid *Tmp = Src;
         Src = Dst;
         Dst = Tmp;
-        //Print(Src);
     }
+    u64 CyclesElapsed = __rdtsc() - BeginClock;
 
     u32 OnPixelCount = 0;
     u8 *Pixel = Src->Pixels;
@@ -600,7 +449,7 @@ main(int ArgCount, char **Args)
     }
 
     printf("%u\n", OnPixelCount);
-    // 180 - too high
+    printf("Megacycles elapsed: %I64u\n", CyclesElapsed/1000000);
 
     return(0);
 }
