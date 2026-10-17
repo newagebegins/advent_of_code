@@ -430,6 +430,8 @@ DoArtGenerationStep(grid *Src, grid *Dst, conversion_table *ConversionTable)
     u32 SquaresPerSide = Src->PixelsPerSide / SrcPixelsPerSquareSide;
     Dst->PixelsPerSide = SquaresPerSide * DstPixelsPerSquareSide;
 
+    Assert((Dst->PixelsPerSide * Dst->PixelsPerSide) <= ArrayCount(Dst->Pixels));
+
     for(u32 SquareY = 0;
         SquareY < SquaresPerSide;
         ++SquareY)

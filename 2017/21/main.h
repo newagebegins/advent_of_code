@@ -52,7 +52,7 @@ struct conversion_table
 struct grid
 {
     u32 PixelsPerSide;
-    u8 Pixels[4096];
+    u8 Pixels[10000000];
 };
 
 #endif
