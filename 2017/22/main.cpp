@@ -1,25 +1,4 @@
-#include <stdint.h>
-#include <stdio.h>
-
-typedef uint64_t u64;
-typedef uint32_t u32;
-typedef uint16_t u16;
-typedef uint8_t u8;
-
-typedef int64_t s64;
-typedef int32_t s32;
-typedef int16_t s16;
-typedef int8_t s8;
-
-typedef int32_t b32;
-
-#define internal static
-#define local_persist static
-
-#define ArrayCount(Array) (sizeof(Array)/sizeof((Array)[0]))
-
-#define Assert(Condition) if(!(Condition)) { *(int *)0 = 0; }
-#define InvalidDefaultCase default: { Assert(!"Invalid default case"); } break
+#include "main.h"
 
 internal void
 ReadEntireFileAndNullTerminate(char *FileName, u32 BufferSize, char *Buffer)
@@ -57,19 +36,6 @@ ParseU32(char *String)
     }
     return(Result);
 }
-
-#define GRID_WIDTH 1024
-#define GRID_HEIGHT 1024
-
-struct grid
-{
-    u8 Nodes[GRID_HEIGHT][GRID_WIDTH];
-};
-
-struct parser
-{
-    char *At;
-};
 
 inline void
 SkipWhitespace(parser *Parser)
@@ -129,31 +95,62 @@ CountNonEmptyLines(char *Text)
     return(Result);
 }
 
-internal void
-FillGrid(grid *Grid, char *Input)
+internal node *
+GetNode(memory_arena *Arena, grid *Grid, s32 X, s32 Y)
 {
+    u32 HashIndex = ((X*7 + Y*13) & HASH_MASK);
+    node *Node = 0;
+
+    for (Node = Grid->Nodes[HashIndex];
+         Node;
+         Node = Node->NextInHash)
+    {
+        if((Node->X == X) && (Node->Y == Y))
+        {
+            break;
+        }
+    }
+
+    if(!Node)
+    {
+        Node = PushStruct(Arena, node);
+        Node->State = Node_Clean;
+        Node->X = X;
+        Node->Y = Y;
+        Node->NextInHash = Grid->Nodes[HashIndex];
+        Grid->Nodes[HashIndex] = Node;
+    }
+
+    return(Node);
+}
+
+internal grid *
+CreateGrid(memory_arena *Arena, char *Input)
+{
+    grid *Grid = PushStruct(Arena, grid);
+    ZeroStruct(*Grid);
+
     parser Parser;
     Parser.At = Input;
 
     SkipWhitespace(&Parser);
 
-    u32 Width = CountCharsInLine(Parser.At);
-    u32 Height = CountNonEmptyLines(Parser.At);
+    s32 Width = CountCharsInLine(Parser.At);
+    s32 Height = CountNonEmptyLines(Parser.At);
 
-    u32 DstRowY = GRID_HEIGHT/2 - Height/2;
-    u32 DstRowX = GRID_WIDTH/2 - Width/2;
+    s32 DstRowY = -Height/2;
+    s32 DstRowX = -Width/2;
 
     while(Parser.At[0])
     {
-        for(u32 X = 0;
+        for(s32 X = 0;
             X < Width;
             ++X)
         {
             if(Parser.At[0] == '#')
             {
-                Assert((DstRowX + X) < GRID_WIDTH);
-                Assert(DstRowY < GRID_HEIGHT);
-                Grid->Nodes[DstRowY][DstRowX + X] = 1;
+                node *Node = GetNode(Arena, Grid, DstRowX + X, DstRowY);
+                Node->State = Node_Infected;
             }
             else
             {
@@ -165,22 +162,23 @@ FillGrid(grid *Grid, char *Input)
         ++DstRowY;
     }
 
-    Assert(DstRowY == (GRID_HEIGHT/2 + Height/2 + 1));
+    return(Grid);
 }
 
 internal u32
-DoWork(grid *Grid, u32 BurstCount)
+DoWork(memory_arena *Arena, grid *Grid, u32 BurstCount)
 {
     u32 NumBurstsThatCausedInfection = 0;
     s32 DirX = 0;
     s32 DirY = -1;
-    s32 X = GRID_WIDTH/2;
-    s32 Y = GRID_HEIGHT/2;
+    s32 X = 0;
+    s32 Y = 0;
     for(u32 BurstIndex = 0;
         BurstIndex < BurstCount;
         ++BurstIndex)
     {
-        if(Grid->Nodes[Y][X])
+        node *Node = GetNode(Arena, Grid, X, Y);
+        if(Node->State == Node_Infected)
         {
             // NOTE(slava): The current node is infected
 
@@ -189,20 +187,83 @@ DoWork(grid *Grid, u32 BurstCount)
             DirX = -DirY;
             DirY = OldDirX;
 
-            Grid->Nodes[Y][X] = 0;
+            Node->State = Node_Clean;
         }
         else
         {
             // NOTE(slava): The current node is clean
+            Assert(Node->State == Node_Clean);
 
             // NOTE(slava): Turn left
             s32 OldDirX = DirX;
             DirX = DirY;
             DirY = -OldDirX;
 
-            Grid->Nodes[Y][X] = 1;
+            Node->State = Node_Infected;
             ++NumBurstsThatCausedInfection;
         }
+        X += DirX;
+        Y += DirY;
+    }
+    return(NumBurstsThatCausedInfection);
+}
+
+internal u32
+DoWork2(memory_arena *Arena, grid *Grid, u32 BurstCount)
+{
+    u32 NumBurstsThatCausedInfection = 0;
+    s32 DirX = 0;
+    s32 DirY = -1;
+    s32 X = 0;
+    s32 Y = 0;
+    for(u32 BurstIndex = 0;
+        BurstIndex < BurstCount;
+        ++BurstIndex)
+    {
+        node *Node = GetNode(Arena, Grid, X, Y);
+
+        switch(Node->State)
+        {
+            case Node_Clean:
+            {
+                // NOTE(slava): Turn left
+                s32 OldDirX = DirX;
+                DirX = DirY;
+                DirY = -OldDirX;
+
+                Node->State = Node_Weakened;
+            } break;
+
+            case Node_Infected:
+            {
+                // NOTE(slava): Turn right
+                s32 OldDirX = DirX;
+                DirX = -DirY;
+                DirY = OldDirX;
+
+                Node->State = Node_Flagged;
+            } break;
+
+            case Node_Weakened:
+            {
+                // NOTE(slava): Continue moving in the same direction
+
+                Node->State = Node_Infected;
+                ++NumBurstsThatCausedInfection;
+            } break;
+
+            case Node_Flagged:
+            {
+                // NOTE(slava): Reverse direction
+                DirX = -DirX;
+                DirY = -DirY;
+
+                Node->State = Node_Clean;
+            } break;
+
+            InvalidDefaultCase;
+        }
+
         X += DirX;
         Y += DirY;
     }
@@ -213,15 +274,29 @@ int
 main(int ArgCount, char **Args)
 {
     char *InputFileName = ((ArgCount > 1) ? Args[1] : "input.txt");
-    u32 BurstCount = ((ArgCount > 2) ? ParseU32(Args[2]) : 10000);
 
     local_persist char Input[4*1024];
     ReadEntireFileAndNullTerminate(InputFileName, sizeof(Input), Input);
 
-    local_persist grid Grid;
-    FillGrid(&Grid, Input);
-    u32 NumBurstsThatCausedInfection = DoWork(&Grid, BurstCount);
-    printf("%u\n", NumBurstsThatCausedInfection);
+    local_persist u8 ArenaMemory[64*1024*1024];
+    memory_arena Arena;
+    InitializeArena(&Arena, sizeof(ArenaMemory), ArenaMemory);
+
+    // NOTE(slava): Part 1
+    {
+        Clear(&Arena);
+        grid *Grid = CreateGrid(&Arena, Input);
+        u32 NumBurstsThatCausedInfection = DoWork(&Arena, Grid, 10000);
+        printf("%u\n", NumBurstsThatCausedInfection);
+    }
+
+    // NOTE(slava): Part 2
+    {
+        Clear(&Arena);
+        grid *Grid = CreateGrid(&Arena, Input);
+        u32 NumBurstsThatCausedInfection = DoWork2(&Arena, Grid, 10000000);
+        printf("%u\n", NumBurstsThatCausedInfection);
+    }
 
     return(0);
 }
