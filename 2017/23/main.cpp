@@ -480,6 +480,42 @@ ParseInstructions(char *Input)
     return(Result);
 }
 
+static register_value
+SolvePart2()
+{
+    register_value b = 0;
+    register_value c = 0;
+    register_value d = 0;
+    register_value f = 0;
+    register_value h = 0;
+
+    b = 109300;
+    c = b + 17000;
+    for(;;)
+    {
+        f = 1;
+        d = 2;
+        do
+        {
+            if(b % d == 0)
+            {
+                f = 0;
+                break;
+            }
+            ++d;
+        } while(d != b);
+        if(f == 0)
+        {
+            ++h;
+        }
+        if(b == c)
+        {
+            return h;
+        }
+        b += 17;
+    }
+}
+
 int
 main(int ArgCount, char **Args)
 {
@@ -497,7 +533,8 @@ main(int ArgCount, char **Args)
         {
             if(SolvePart1(ParseResult))
             {
-                // NOTE(slava): Success!
+                register_value h = SolvePart2();
+                printf("%llu\n", h);
             }
             else
             {
