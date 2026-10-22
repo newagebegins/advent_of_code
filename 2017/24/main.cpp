@@ -159,6 +159,50 @@ FindMaxBridgeStrength(memory_arena *Arena, u32 ComponentCount, component *Compon
     return(Result);
 }
 
+struct bridge
+{
+    u32 Length;
+    u32 Strength;
+};
+
+internal bridge
+FindLongestBridge(memory_arena *Arena, u32 ComponentCount, component *Components,
+                  u8 StartPort)
+{
+    bridge Result = {};
+    for(u32 ComponentIndex = 0;
+        ComponentIndex < ComponentCount;
+        ++ComponentIndex)
+    {
+        component Component = Components[ComponentIndex];
+        if(CanConnect(Component, StartPort))
+        {
+            temporary_memory TempMem = BeginTemporaryMemory(Arena);
+            u8 EndPort = GetEndPort(Component, StartPort);
+            u32 RemainingComponentCount = ComponentCount - 1;
+            component *RemainingComponents = PushArray(Arena, RemainingComponentCount, component);
+            CopyComponentsWithout(ComponentCount, Components, RemainingComponents, ComponentIndex);
+            bridge Bridge = FindLongestBridge(Arena, RemainingComponentCount, RemainingComponents,
+                                              EndPort);
+            ++Bridge.Length;
+            Bridge.Strength += GetComponentStrength(Component);
+            if(Result.Length < Bridge.Length)
+            {
+                Result = Bridge;
+            }
+            else if(Result.Length == Bridge.Length)
+            {
+                if(Result.Strength < Bridge.Strength)
+                {
+                    Result = Bridge;
+                }
+            }
+            EndTemporaryMemory(TempMem);
+        }
+    }
+    return(Result);
+}
+
 struct parser
 {
     char *At;
@@ -270,6 +314,9 @@ main(int ArgCount, char **Args)
 
     u32 MaxStrength = FindMaxBridgeStrength(&Arena, ParsedInput.ComponentCount, ParsedInput.Components, 0);
     printf("%u\n", MaxStrength);
+
+    bridge LongestBridge = FindLongestBridge(&Arena, ParsedInput.ComponentCount, ParsedInput.Components, 0);
+    printf("%u\n", LongestBridge.Strength);
 
     CheckArena(&Arena);
 
