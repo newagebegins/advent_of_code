@@ -73,6 +73,7 @@ CheckArena(memory_arena *Arena)
 }
 
 #define PushArray(Arena, Count, type) (type *)PushSize_(Arena, Count*sizeof(type))
+#define PushStruct(Arena, type) (type *)PushSize_(Arena, sizeof(type))
 
 inline void *
 PushSize_(memory_arena *Arena, memory_index Size)
@@ -150,6 +151,33 @@ ParseS32(parser *Parser)
     }
 
     Result *= Sign;
+    return(Result);
+}
+
+inline u32
+CountLines(char *Text)
+{
+    u32 Result = 0;
+    for(char *At = Text;
+        *At;
+        ++At)
+    {
+        if(*At == '\n')
+        {
+            ++Result;
+        }
+    }
+    return(Result);
+}
+
+inline s32
+ModN(s32 Value, s32 N)
+{
+    s32 Result = Value % N;
+    if(Result < 0)
+    {
+        Result += N;
+    }
     return(Result);
 }
 
