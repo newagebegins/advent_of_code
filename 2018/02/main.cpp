@@ -84,6 +84,71 @@ FindChecksum(u32 IDCount, str *IDs)
     return(Result);
 }
 
+internal void
+SolvePart1(u32 IDCount, str *IDs)
+{
+    u32 Checksum = FindChecksum(IDCount, IDs);
+    printf("%u\n", Checksum);
+}
+
+struct differ_result
+{
+    b32 Success;
+    u32 LetterIndex;
+};
+
+internal differ_result
+DifferByOneLetter(str A, str B)
+{
+    differ_result Result = {};
+    if(A.Length == B.Length)
+    {
+        u32 DiffCount = 0;
+        for(u32 LetterIndex = 0;
+            (LetterIndex < A.Length) && (DiffCount < 2);
+            ++LetterIndex)
+        {
+            if(A.Chars[LetterIndex] != B.Chars[LetterIndex])
+            {
+                ++DiffCount;
+                Result.LetterIndex = LetterIndex;
+            }
+        }
+        Result.Success = (DiffCount == 1);
+    }
+    return(Result);
+}
+
+internal void
+SolvePart2(u32 IDCount, str *IDs)
+{
+    str FoundID = {};
+    u32 DiffLetterIndex = 0;
+    for(u32 IndexA = 0;
+        (IndexA < (IDCount - 1)) && !(FoundID.Length);
+        ++IndexA)
+    {
+        str A = IDs[IndexA];
+        for(u32 IndexB = IndexA + 1;
+            (IndexB < IDCount) && !(FoundID.Length);
+            ++IndexB)
+        {
+            str B = IDs[IndexB];
+            differ_result Differ = DifferByOneLetter(A, B);
+            if(Differ.Success)
+            {
+                FoundID = A;
+                DiffLetterIndex = Differ.LetterIndex;
+            }
+        }
+    }
+    Assert(FoundID.Length);
+    Assert(FoundID.Chars);
+    printf("%.*s", DiffLetterIndex, FoundID.Chars);
+    Assert(DiffLetterIndex < FoundID.Length);
+    printf("%.*s\n", FoundID.Length - (DiffLetterIndex + 1), FoundID.Chars + DiffLetterIndex + 1);
+}
+
 int
 main(int ArgCount, char **Args)
 {
@@ -92,8 +157,8 @@ main(int ArgCount, char **Args)
     if(Input)
     {
         parse_result ParseResult = ParseInput(Input);
-        u32 Checksum = FindChecksum(ParseResult.IDCount, ParseResult.IDs);
-        printf("%u\n", Checksum);
+        SolvePart1(ParseResult.IDCount, ParseResult.IDs);
+        SolvePart2(ParseResult.IDCount, ParseResult.IDs);
     }
     else
     {
