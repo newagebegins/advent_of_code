@@ -104,6 +104,46 @@ ClaimFabric(claim_rects Rects)
     return(Result);
 }
 
+internal b32
+Overlaps(claimed_fabric Fabric, claim_rect Rect)
+{
+    b32 Result = false;
+    for(u32 Y = Rect.Y;
+        (Y < (Rect.Y + Rect.Height)) && !Result;
+        ++Y)
+    {
+        for(u32 X = Rect.X;
+            X < (Rect.X + Rect.Width);
+            ++X)
+        {
+            if(Fabric.ClaimCounts[Y*Fabric.Width + X] > 1)
+            {
+                Result = true;
+                break;
+            }
+        }
+    }
+    return(Result);
+}
+
+internal u32
+FindNonOverlappingClaimID(claimed_fabric Fabric, claim_rects Rects)
+{
+    u32 Result = 0;
+    for(u32 RectIndex = 0;
+        RectIndex < Rects.Count;
+        ++RectIndex)
+    {
+        claim_rect Rect = Rects.Rects[RectIndex];
+        if(!Overlaps(Fabric, Rect))
+        {
+            Result = RectIndex + 1;
+            break;
+        }
+    }
+    return(Result);
+}
+
 int
 main(int ArgCount, char **Args)
 {
@@ -115,6 +155,9 @@ main(int ArgCount, char **Args)
         claimed_fabric Fabric = ClaimFabric(Rects);
         u32 Overlaps = CountClaimOverlaps(Fabric);
         printf("%u\n", Overlaps);
+
+        u32 ID = FindNonOverlappingClaimID(Fabric, Rects);
+        printf("%u\n", ID);
     }
     else
     {
