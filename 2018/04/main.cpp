@@ -146,13 +146,13 @@ CollateRecords(records Records)
     return(Guards);
 }
 
-struct strategy1_result
+struct strategy_result
 {
     u16 GuardID;
     u8 Minute;
 };
 
-internal strategy1_result
+internal strategy_result
 DoStrategy1(guard *Guards)
 {
     u32 MaxTotalMinutesAsleep = 0;
@@ -186,9 +186,38 @@ DoStrategy1(guard *Guards)
         }
     }
 
-    strategy1_result Result;
+    strategy_result Result;
     Result.GuardID = ChosenID;
     Result.Minute = ChosenMinute;
+
+    return(Result);
+}
+
+internal strategy_result
+DoStrategy2(guard *Guards)
+{
+    strategy_result Result = {};
+
+    u8 MaxAsleepCountForMinute = 0;
+
+    for(u16 GuardID = 0;
+        GuardID < ONE_PAST_MAX_GUARD_ID;
+        ++GuardID)
+    {
+        guard *Guard = Guards + GuardID;
+
+        for(u8 Minute = 0;
+            Minute < 60;
+            ++Minute)
+        {
+            if(MaxAsleepCountForMinute < Guard->AsleepCountForMinute[Minute])
+            {
+                MaxAsleepCountForMinute = Guard->AsleepCountForMinute[Minute];
+                Result.GuardID = GuardID;
+                Result.Minute = Minute;
+            }
+        }
+    }
 
     return(Result);
 }
@@ -203,8 +232,12 @@ main(int ArgCount, char **Args)
         records Records = ParseRecords(Input);
         SortRecords(Records);
         guard *Guards = CollateRecords(Records);
-        strategy1_result Result1 = DoStrategy1(Guards);
+
+        strategy_result Result1 = DoStrategy1(Guards);
         printf("%u\n", Result1.GuardID * Result1.Minute);
+
+        strategy_result Result2 = DoStrategy2(Guards);
+        printf("%u\n", Result2.GuardID * Result2.Minute);
     }
     else
     {
