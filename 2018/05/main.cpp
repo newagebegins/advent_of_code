@@ -81,6 +81,46 @@ DoReactions(polymer *Polymer)
     }
 }
 
+internal void
+RemoveUnitType(polymer *Polymer, char UnitTypeToRemove)
+{
+    for(polymer_unit *Unit1 = Polymer->First;
+        Unit1;
+        )
+    {
+        if(Unit1->Type == UnitTypeToRemove)
+        {
+            // 0 -> [1] -> 2
+            polymer_unit *Unit2 = Unit1->Next;
+            polymer_unit *Unit0 = Unit1->Prev;
+
+            if(Unit0)
+            {
+                Unit0->Next = Unit2;
+            }
+            if(Unit2)
+            {
+                Unit2->Prev = Unit0;
+            }
+
+            *Unit1 = {};
+
+            if(Unit2)
+            {
+                Unit1 = Unit2;
+            }
+            if(!Unit0)
+            {
+                Polymer->First = Unit2;
+            }
+        }
+        else
+        {
+            Unit1 = Unit1->Next;
+        }
+    }
+}
+
 internal u32
 CountUnits(polymer Polymer)
 {
@@ -92,6 +132,39 @@ CountUnits(polymer Polymer)
         ++Result;
     }
     return(Result);
+}
+
+internal void
+SolvePart1(memory_arena *Arena, char *Input)
+{
+    temporary_memory TempMem = BeginTemporaryMemory(Arena);
+    polymer Polymer = ParsePolymer(Arena, Input);
+    DoReactions(&Polymer);
+    u32 Count = CountUnits(Polymer);
+    printf("%u\n", Count);
+    EndTemporaryMemory(TempMem);
+}
+
+internal void
+SolvePart2(memory_arena *Arena, char *Input)
+{
+    u32 MinCount = 0xFFFFFFFF;
+    for(char UnitTypeToRemove = 'a';
+        UnitTypeToRemove <= 'z';
+        ++UnitTypeToRemove)
+    {
+        temporary_memory TempMem = BeginTemporaryMemory(Arena);
+        polymer Polymer = ParsePolymer(Arena, Input);
+        RemoveUnitType(&Polymer, UnitTypeToRemove);
+        DoReactions(&Polymer);
+        u32 Count = CountUnits(Polymer);
+        if(Count < MinCount)
+        {
+            MinCount = Count;
+        }
+        EndTemporaryMemory(TempMem);
+    }
+    printf("%u\n", MinCount);
 }
 
 int
@@ -106,10 +179,10 @@ main(int ArgCount, char **Args)
         memory_arena Arena;
         InitializeArena(&Arena, ArenaSize, ArenaBase);
 
-        polymer Polymer = ParsePolymer(&Arena, Input);
-        DoReactions(&Polymer);
-        u32 Count = CountUnits(Polymer);
-        printf("%u\n", Count);
+        SolvePart1(&Arena, Input);
+        SolvePart2(&Arena, Input);
+
+        CheckArena(&Arena);
     }
     else
     {
