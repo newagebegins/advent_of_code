@@ -184,6 +184,18 @@ ParseWord(parser *Parser)
 }
 
 inline u32
+ParseU32(char *Str)
+{
+    u32 Result = 0;
+    while(IsDigit(*Str))
+    {
+        Result = 10*Result + (*Str - '0');
+        ++Str;
+    }
+    return(Result);
+}
+
+inline u32
 ParseU32(parser *Parser)
 {
     u32 Result = 0;

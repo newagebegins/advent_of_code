@@ -41,8 +41,8 @@ ParsePoints(char *Input)
     return(Result);
 }
 
-internal u32
-FindLargestAreaThatIsntInfinite(u32 PointCount, v2i *Points)
+internal void
+SolvePart1(u32 PointCount, v2i *Points)
 {
     s32 MinX = INT_MAX;
     s32 MaxX = INT_MIN;
@@ -132,16 +132,84 @@ FindLargestAreaThatIsntInfinite(u32 PointCount, v2i *Points)
         }
     }
 
+    printf("%u\n", MaxArea);
+
     free(InfiniteArea);
     free(Area);
+}
 
-    return(MaxArea);
+internal void
+SolvePart2(u32 PointCount, v2i *Points, u32 MaxTotalDistance)
+{
+    s32 MinX = INT_MAX;
+    s32 MaxX = INT_MIN;
+    s32 MinY = INT_MAX;
+    s32 MaxY = INT_MIN;
+
+    for(u32 PointIndex = 1;
+        PointIndex < PointCount;
+        ++PointIndex)
+    {
+        v2i P = Points[PointIndex];
+        if(P.x < MinX)
+        {
+            MinX = P.x;
+        }
+        else if(P.x > MaxX)
+        {
+            MaxX = P.x;
+        }
+        if(P.y < MinY)
+        {
+            MinY = P.y;
+        }
+        else if(P.y > MaxY)
+        {
+            MaxY = P.y;
+        }
+    }
+
+    u32 CountX = MaxX - MinX + 1;
+    u32 CountY = MaxY - MinY + 1;
+    u32 Area = 0;
+
+    for(u32 OffsetY = 0;
+        OffsetY < CountY;
+        ++OffsetY)
+    {
+        s32 Y = MinY + OffsetY;
+
+        for(u32 OffsetX = 0;
+            OffsetX < CountX;
+            ++OffsetX)
+        {
+            s32 X = MinX + OffsetX;
+            u32 TotalDistance = 0;
+
+            for(u32 PointIndex = 1;
+                PointIndex < PointCount;
+                ++PointIndex)
+            {
+                v2i P = Points[PointIndex];
+                u32 Distance = AbsoluteValue(P.x - X) + AbsoluteValue(P.y - Y);
+                TotalDistance += Distance;
+            }
+
+            if(TotalDistance < MaxTotalDistance)
+            {
+                ++Area;
+            }
+        }
+    }
+
+    printf("%u\n", Area);
 }
 
 int
 main(int ArgCount, char **Args)
 {
     char *InputFileName = ((ArgCount > 1) ? Args[1] : "input.txt");
+    u32 MaxTotalDistance = ((ArgCount > 2) ? ParseU32(Args[2]) : 10000);
     char *Input = ReadEntireFileAndNullTerminate(InputFileName);
     if(Input)
     {
@@ -151,8 +219,9 @@ main(int ArgCount, char **Args)
         InitializeArena(&Arena, ArenaSize, ArenaBase);
 
         parse_result ParseResult = ParsePoints(Input);
-        u32 LargestArea = FindLargestAreaThatIsntInfinite(ParseResult.PointCount, ParseResult.Points);
-        printf("%u\n", LargestArea);
+
+        SolvePart1(ParseResult.PointCount, ParseResult.Points);
+        SolvePart2(ParseResult.PointCount, ParseResult.Points, MaxTotalDistance);
 
         CheckArena(&Arena);
     }
