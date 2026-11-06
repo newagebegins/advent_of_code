@@ -74,13 +74,16 @@ FindLargestAreaThatIsntInfinite(u32 PointCount, v2i *Points)
 
     u32 CountX = MaxX - MinX + 1;
     u32 CountY = MaxY - MinY + 1;
-    u8 *Grid = (u8 *)malloc(CountX*CountY*sizeof(u8));
+
+    u32 *Area = (u32 *)calloc(PointCount, sizeof(u32));
+    b32 *InfiniteArea = (b32 *)calloc(PointCount, sizeof(b32));
 
     for(u32 OffsetY = 0;
         OffsetY < CountY;
         ++OffsetY)
     {
         s32 Y = MinY + OffsetY;
+
         for(u32 OffsetX = 0;
             OffsetX < CountX;
             ++OffsetX)
@@ -88,6 +91,7 @@ FindLargestAreaThatIsntInfinite(u32 PointCount, v2i *Points)
             s32 X = MinX + OffsetX;
             u32 MinDistance = UINT_MAX;
             u32 ClosestPointIndex = 0;
+
             for(u32 PointIndex = 1;
                 PointIndex < PointCount;
                 ++PointIndex)
@@ -104,29 +108,14 @@ FindLargestAreaThatIsntInfinite(u32 PointCount, v2i *Points)
                     ClosestPointIndex = 0;
                 }
             }
-            Grid[OffsetY*CountX + OffsetX] = (u8)ClosestPointIndex;
-        }
-    }
 
-    u32 *Area = (u32 *)calloc(PointCount, sizeof(u32));
-    b32 *InfiniteArea = (b32 *)calloc(PointCount, sizeof(b32));
-
-    for(u32 OffsetY = 0;
-        OffsetY < CountY;
-        ++OffsetY)
-    {
-        for(u32 OffsetX = 0;
-            OffsetX < CountX;
-            ++OffsetX)
-        {
-            u8 PointIndex = Grid[OffsetY*CountX + OffsetX];
-            ++Area[PointIndex];
+            ++Area[ClosestPointIndex];
             if((OffsetX == 0) ||
                (OffsetY == 0) ||
                (OffsetX == (CountX - 1)) ||
                (OffsetY == (CountY - 1)))
             {
-                InfiniteArea[PointIndex] = true;
+                InfiniteArea[ClosestPointIndex] = true;
             }
         }
     }
@@ -145,7 +134,6 @@ FindLargestAreaThatIsntInfinite(u32 PointCount, v2i *Points)
 
     free(InfiniteArea);
     free(Area);
-    free(Grid);
 
     return(MaxArea);
 }
