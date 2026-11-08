@@ -101,15 +101,108 @@ SolvePart1(step *Steps)
     printf("\n");
 }
 
+internal void
+SolvePart2(step *Steps, u32 WorkerCount, u32 BaseStepSeconds)
+{
+    u32 Time = 0;
+    worker *Workers = (worker *)calloc(WorkerCount, sizeof(worker));
+    u32 FreeWorkerCount = WorkerCount;
+    
+    u8 NextSteps[MAX_STEP_COUNT];
+    u32 NextStepCount = 0;
+
+    for(u8 StepIndex = 0;
+        StepIndex < MAX_STEP_COUNT;
+        ++StepIndex)
+    {
+        step *Step = Steps + StepIndex;
+        if((Step->InCount == 0) && (Step->OutCount != 0))
+        {
+            Assert(NextStepCount < ArrayCount(NextSteps));
+            NextSteps[NextStepCount++] = StepIndex;
+        }
+    }
+
+    while((NextStepCount != 0) || (FreeWorkerCount != WorkerCount))
+    {
+        SortDesc(NextStepCount, NextSteps);
+        while((NextStepCount != 0) && (FreeWorkerCount != 0))
+        {
+            u8 NextStepIndex = NextSteps[--NextStepCount];
+            for(u32 WorkerIndex = 0;
+                WorkerIndex < WorkerCount;
+                ++WorkerIndex)
+            {
+                worker *Worker = Workers + WorkerIndex;
+                if(Worker->SecondsLeft == 0)
+                {
+                    Worker->StepIndex = NextStepIndex;
+                    Worker->SecondsLeft = BaseStepSeconds + NextStepIndex + 1;
+                    --FreeWorkerCount;
+                    break;
+                }
+            }
+        }
+
+        ++Time;
+
+        for(u32 WorkerIndex = 0;
+            WorkerIndex < WorkerCount;
+            ++WorkerIndex)
+        {
+            worker *Worker = Workers + WorkerIndex;
+            if(Worker->SecondsLeft != 0)
+            {
+                --Worker->SecondsLeft;
+                if(Worker->SecondsLeft == 0)
+                {
+                    ++FreeWorkerCount;
+                    //printf("%c", 'A' + Worker->StepIndex);
+                    step *Step = Steps + Worker->StepIndex;
+
+                    for(u8 OutIndex = 0;
+                        OutIndex < Step->OutCount;
+                        ++OutIndex)
+                    {
+                        step *OutStep = Steps + Step->Out[OutIndex];
+                        Assert(OutStep->InCount != 0);
+                        --OutStep->InCount;
+
+                        if(OutStep->InCount == 0)
+                        {
+                            Assert(NextStepCount < ArrayCount(NextSteps));
+                            NextSteps[NextStepCount++] = Step->Out[OutIndex];
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    printf("%u\n", Time);
+
+    free(Workers);
+}
+
 int
 main(int ArgCount, char **Args)
 {
     char *InputFileName = ((ArgCount > 1) ? Args[1] : "input.txt");
+    u32 WorkerCount = ((ArgCount > 2) ? ParseU32(Args[2]) : 5);
+    u32 BaseStepSeconds = ((ArgCount > 3) ? ParseU32(Args[3]) : 60);
     char *Input = ReadEntireFileAndNullTerminate(InputFileName);
     if(Input)
     {
-        step *Steps = ParseSteps(Input);
-        SolvePart1(Steps);
+        {
+            step *Steps = ParseSteps(Input);
+            SolvePart1(Steps);
+            free(Steps);
+        }
+        {
+            step *Steps = ParseSteps(Input);
+            SolvePart2(Steps, WorkerCount, BaseStepSeconds);
+            free(Steps);
+        }
     }
     else
     {

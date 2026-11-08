@@ -10,4 +10,10 @@ struct step
     u8 Out[MAX_STEP_COUNT];
 };
 
+struct worker
+{
+    u8 StepIndex;
+    u32 SecondsLeft;
+};
+
 #endif
