@@ -58,6 +58,82 @@ SumMetadataEntries(u32 *Node)
     return(Result);
 }
 
+struct create_node_tree_result
+{
+    node Node;
+    u32 *NumbersAt;
+};
+
+internal create_node_tree_result
+CreateNodeTree(memory_arena *Arena, u32 *Numbers)
+{
+    create_node_tree_result Result = {};
+    Result.NumbersAt = Numbers;
+    node *Node = &Result.Node;
+    Node->ChildCount = *Result.NumbersAt++;
+    Node->MetaCount = *Result.NumbersAt++;
+    if(Node->ChildCount == 0)
+    {
+        Node->Children = 0;
+    }
+    else
+    {
+        Node->Children = PushArray(Arena, Node->ChildCount, node);
+        for(u32 ChildIndex = 0;
+            ChildIndex < Node->ChildCount;
+            ++ChildIndex)
+        {
+            create_node_tree_result ChildResult = CreateNodeTree(Arena, Result.NumbersAt);
+            Node->Children[ChildIndex] = ChildResult.Node;
+            Result.NumbersAt = ChildResult.NumbersAt;
+        }
+    }
+    if(Node->MetaCount == 0)
+    {
+        Node->Meta = 0;
+    }
+    else
+    {
+        Node->Meta = PushArray(Arena, Node->MetaCount, u32);
+        for(u32 MetaIndex = 0;
+            MetaIndex < Node->MetaCount;
+            ++MetaIndex)
+        {
+            Node->Meta[MetaIndex] = *Result.NumbersAt++;
+        }
+    }
+    return(Result);
+}
+
+internal u32
+GetNodeValue(node Node)
+{
+    u32 Result = 0;
+    if(Node.ChildCount == 0)
+    {
+        for(u32 MetaIndex = 0;
+            MetaIndex < Node.MetaCount;
+            ++MetaIndex)
+        {
+            Result += Node.Meta[MetaIndex];
+        }
+    }
+    else
+    {
+        for(u32 MetaIndex = 0;
+            MetaIndex < Node.MetaCount;
+            ++MetaIndex)
+        {
+            u32 ChildOneBasedIndex = Node.Meta[MetaIndex];
+            if((ChildOneBasedIndex != 0) && (ChildOneBasedIndex <= Node.ChildCount))
+            {
+                Result += GetNodeValue(Node.Children[ChildOneBasedIndex - 1]);
+            }
+        }
+    }
+    return(Result);
+}
+
 int
 main(int ArgCount, char **Args)
 {
@@ -65,9 +141,18 @@ main(int ArgCount, char **Args)
     char *Input = ReadEntireFileAndNullTerminate(InputFileName);
     if(Input)
     {
+        memory_arena Arena;
+        memory_index ArenaSize = Megabytes(16);
+        void *ArenaBase = malloc(ArenaSize);
+        InitializeArena(&Arena, ArenaSize, ArenaBase);
+
         numbers Numbers = ParseNumbers(Input);
         sum_result SumResult = SumMetadataEntries(Numbers.Numbers);
         printf("%u\n", SumResult.Sum);
+
+        create_node_tree_result TreeResult = CreateNodeTree(&Arena, Numbers.Numbers);
+        u32 Value = GetNodeValue(TreeResult.Node);
+        printf("%u\n", Value);
     }
     else
     {
