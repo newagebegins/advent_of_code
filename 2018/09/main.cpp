@@ -146,6 +146,8 @@ main(int ArgCount, char **Args)
         parsed_input ParsedInput = ParseInput(Input);
         u32 MaxScore = PlayMarbles(ParsedInput.PlayerCount, ParsedInput.LastMarbleNumber + 1);
         printf("%u\n", MaxScore);
+        u32 MaxScore2 = PlayMarbles(ParsedInput.PlayerCount, 100*(ParsedInput.LastMarbleNumber + 1));
+        printf("%u\n", MaxScore2);
     }
     else
     {
