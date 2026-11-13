@@ -172,11 +172,14 @@ PrintPoints(points Points)
 internal void
 FindMessage(points Points)
 {
+    u32 SecondsPassed = 0;
     while(!AssembledIntoMessage(Points))
     {
         SimulateOneSecond(Points);
+        ++SecondsPassed;
     }
     PrintPoints(Points);
+    printf("%u\n", SecondsPassed);
 }
 
 int
